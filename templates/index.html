@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Network Traffic Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <style>
+    :root {
+      --bg: #f6f3ed;
+      --surface: #fffdf8;
+      --surface-2: #f2ede4;
+      --border: #ded7cb;
+      --text: #1e2630;
+      --muted: #6d7684;
+      --head: #101723;
+      --accent: #0e7aa8;
+      --accent-2: #167a61;
+      --warn: #b66a22;
+      --red: #c34d4d;
+      --shadow: 0 18px 40px rgba(17, 24, 39, .06);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: 'IBM Plex Sans', sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(14, 122, 168, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(22, 122, 97, 0.08), transparent 22%),
+        linear-gradient(180deg, #fbfaf6 0%, var(--bg) 100%);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .26;
+      background-image:
+        linear-gradient(rgba(255,255,255,.55) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.5) 1px, transparent 1px);
+      background-size: 24px 24px;
+      mask-image: linear-gradient(180deg, rgba(0,0,0,.55), transparent 85%);
+    }
+
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 18px 22px 28px;
+    }
+
+    .navbar-shell {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      background: rgba(255, 253, 248, .86);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      position: sticky;
+      top: 12px;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      color: white;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 10px 24px rgba(14, 122, 168, .25);
+      flex-shrink: 0;
+    }
+
+    .brand-copy h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--head);
+    }
+
+    .brand-copy p {
+      margin: 2px 0 0;
+      font-size: .82rem;
+      color: var(--muted);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .nav-cluster {
+      margin-top: 18px;
+      padding: 12px 14px;
+      background: rgba(255, 253, 248, .84);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .nav-links a {
+      text-decoration: none;
+      color: var(--text);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .72rem;
+      font-weight: 600;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+
+    .nav-links a:hover, .nav-links a.active {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow);
+      background: rgba(14, 122, 168, .08);
+      color: var(--accent);
+      border-color: rgba(14, 122, 168, .22);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 18px 0 0;
+      padding: 14px 16px;
+      background: rgba(255, 253, 248, .88);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero-card, .panel {
+      background: rgba(255, 253, 248, .9);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .hero-card {
+      padding: 34px 34px 30px;
+      background: linear-gradient(135deg, rgba(14, 122, 168, 0.10) 0%, rgba(22, 122, 97, 0.08) 100%), rgba(255, 253, 248, .92);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .66rem;
+      font-weight: 600;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+
+    .hero-card h2 {
+      margin: 0;
+      font-size: 2.1rem;
+      font-weight: 700;
+      color: var(--head);
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+    }
+
+    .hero-card p {
+      margin: 14px 0 0;
+      font-size: 1rem;
+      color: var(--muted);
+      max-width: 60ch;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .btn-soft {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .72rem;
+      font-weight: 600;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      text-decoration: none;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-soft:hover {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow);
+      background: #fff;
+      color: var(--text);
+    }
+
+    .btn-primary-soft {
+      border-color: rgba(14, 122, 168, .28);
+      background: rgba(14, 122, 168, .08);
+      color: var(--accent);
+    }
+
+    .hero-side {
+      display: grid;
+      gap: 14px;
+    }
+
+    .status-panel, .feature-panel {
+      background: rgba(255, 253, 248, .92);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 20px 22px;
+    }
+
+    .status-label {
+      font-size: .7rem;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .status-copy {
+      font-size: .96rem;
+      font-weight: 600;
+      color: var(--head);
+      line-height: 1.4;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: .84rem;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .status-pill.connected {
+      background: rgba(22, 122, 97, .12);
+      color: #167a61;
+      border-color: rgba(22, 122, 97, .18);
+    }
+
+    .status-pill.disconnected {
+      background: rgba(195, 77, 77, .12);
+      color: #c34d4d;
+      border-color: rgba(195, 77, 77, .18);
+    }
+
+    .upload-card {
+      margin-top: 18px;
+      background: rgba(255, 253, 248, .92);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      backdrop-filter: blur(14px);
+    }
+
+    .upload-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(242, 237, 228, .72), rgba(255,255,255,0));
+    }
+
+    .upload-header h3 {
+      margin: 0;
+      font-size: .86rem;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      color: var(--head);
+      font-weight: 700;
+    }
+
+    .upload-body {
+      padding: 24px;
+    }
+
+    .upload-zone {
+      border: 1px dashed rgba(14, 122, 168, .35);
+      border-radius: 20px;
+      padding: 54px 40px;
+      text-align: center;
+      background: linear-gradient(135deg, rgba(255,255,255,.86) 0%, rgba(242, 237, 228, .72) 100%);
+      transition: all 0.3s ease;
+      cursor: pointer;
+      position: relative;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.6);
+    }
+
+    .upload-zone:hover {
+      border-color: var(--accent);
+      background: linear-gradient(135deg, rgba(14, 122, 168, 0.08) 0%, rgba(22, 122, 97, 0.08) 100%);
+      transform: translateY(-4px);
+    }
+
+    .upload-zone.dragover {
+      border-color: var(--accent);
+      background: linear-gradient(135deg, rgba(14, 122, 168, 0.12) 0%, rgba(22, 122, 97, 0.12) 100%);
+    }
+
+    .upload-icon {
+      font-size: 4.4rem;
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+
+    .upload-text {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--head);
+    }
+
+    .upload-subtext {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: .95rem;
+    }
+
+    .file-input { display: none; }
+
+    .selected-file {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin-top: 16px;
+      display: none;
+      box-shadow: var(--shadow);
+    }
+
+    .selected-file.show { display: block; }
+
+    .file-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .file-name {
+      font-weight: 600;
+      color: var(--head);
+      word-break: break-all;
+    }
+
+    .file-size {
+      color: var(--muted);
+      font-size: .9rem;
+    }
+
+    .btn-upload {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+      color: white;
+      border: none;
+      padding: 15px 40px;
+      font-size: 1.05rem;
+      border-radius: 999px;
+      font-weight: 700;
+      transition: all 0.3s ease;
+      box-shadow: 0 8px 22px rgba(14, 122, 168, 0.25);
+    }
+
+    .btn-upload:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 26px rgba(14, 122, 168, 0.3);
+    }
+
+    .btn-upload:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .progress-container { margin-top: 20px; display: none; }
+    .progress-container.show { display: block; }
+    .alert { border-radius: 12px; border: none; }
+
+    .features {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .feature-card {
+      background: linear-gradient(135deg, rgba(14, 122, 168, 0.08) 0%, rgba(22, 122, 97, 0.08) 100%);
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      text-align: center;
+      box-shadow: var(--shadow);
+    }
+
+    .feature-icon {
+      font-size: 2rem;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+
+    .feature-title {
+      font-weight: 700;
+      color: var(--head);
+      margin-bottom: 4px;
+    }
+
+    .feature-desc {
+      font-size: .84rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 1000px) {
+      .hero, .features { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 760px) {
+      .shell { padding: 12px; }
+      .navbar-shell, .hero, .features { grid-template-columns: 1fr; }
+      .navbar-shell { position: static; }
+      .status-bar { flex-direction: column; align-items: flex-start; }
+      .nav-cluster { padding: 12px; }
+      .hero-card { padding: 24px; }
+      .upload-body { padding: 18px; }
+      .upload-zone { padding: 36px 20px; }
+      .upload-header h2 { font-size: 1.8rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="navbar-shell">
+      <div class="brand">
+        <div class="brand-mark"><i class="bi bi-shield-lock-fill"></i></div>
+        <div class="brand-copy">
+          <h1>Network Traffic Analysis</h1>
+          <p>Upload PCAP files and explore them across pages</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div>
+        <div class="status-label">Elasticsearch Status</div>
+        <div class="status-copy">{{ elastic_message }}</div>
+      </div>
+      <div class="status-pill {% if elastic_connected %}connected{% else %}disconnected{% endif %}">
+        {% if elastic_connected %}
+        <i class="bi bi-check-circle-fill"></i>
+        <span>Connected</span>
+        {% else %}
+        <i class="bi bi-x-circle-fill"></i>
+        <span>Not Connected</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="nav-cluster">
+      <div class="nav-links" style="justify-content: flex-start;">
+        <button type="button" class="btn-soft btn-primary-soft" data-bs-toggle="modal" data-bs-target="#uploadModal"><i class="bi bi-upload"></i> Upload</button>
+        <a class="active" href="/">Home</a>
+        <a href="/dashboard">Overview</a>
+        <a href="/details">Details</a>
+        <a href="/report">Report</a>
+      </div>
+    </div>
+
+    
+    <!-- Upload Modal -->
+    <div class="modal fade" id="uploadModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background: rgba(255, 253, 248, .98); border: 1px solid var(--border); border-radius: 24px; box-shadow: var(--shadow);">
+          <div class="modal-header" style="border-bottom: 1px solid var(--border); padding: 20px 24px;">
+            <h5 class="modal-title" style="font-weight: 700; color: var(--head);">Upload PCAP</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body" style="padding: 24px;">
+            <form id="uploadForm" enctype="multipart/form-data">
+              <div class="upload-zone" id="uploadZone" style="border: 1px dashed rgba(14, 122, 168, .35); border-radius: 20px; padding: 40px; text-align: center; cursor: pointer; transition: all 0.3s ease;">
+                <i class="bi bi-cloud-arrow-up upload-icon" style="font-size: 3.5rem; color: var(--accent);"></i>
+                <div class="upload-text" style="font-size: 1.1rem; font-weight: 700; color: var(--head); margin-top:10px;">Drop your PCAP file here</div>
+                <div class="upload-subtext" style="color: var(--muted); font-size: .9rem;">or click to browse</div>
+                <input type="file" name="pcapFile" id="pcapFile" class="file-input" accept=".pcap,.pcapng" style="display:none;">
+              </div>
+
+              <div class="selected-file" id="selectedFile" style="display:none; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-top: 16px;">
+                <div class="file-info" style="display:flex; align-items:center; justify-content:space-between;">
+                  <div>
+                    <i class="bi bi-file-earmark-binary text-primary"></i> <span class="file-name" id="fileName" style="font-weight:600;"></span>
+                  </div>
+                  <div>
+                    <span class="file-size" id="fileSize" style="color:var(--muted); font-size:.85rem;"></span>
+                    <button type="button" class="btn btn-sm btn-outline-danger ms-2" id="clearFile"><i class="bi bi-x-circle"></i> Remove</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="progress-container" id="progressContainer" style="display:none; margin-top:20px;">
+                <div class="progress" style="height: 20px;">
+                  <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: 0%" id="progressBar">
+                    <span id="progressText">Processing...</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="text-center mt-4">
+                <button type="submit" class="btn-upload" id="uploadBtn" disabled style="background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%); color: white; border: none; padding: 12px 30px; border-radius: 999px; font-weight: 700;">
+                  <i class="bi bi-upload"></i> Analyze File
+                </button>
+              </div>
+            </form>
+            <div id="alertContainer" class="mt-3"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <style>
+      .pcap-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 16px;
+        margin-top: 24px;
+      }
+      .repo-stats-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      .pcap-ref-card {
+        background: rgba(255, 253, 248, .92);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: var(--shadow);
+        text-decoration: none;
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+        transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+      }
+      .pcap-ref-card:hover {
+        transform: translateY(-4px);
+        border-color: rgba(14, 122, 168, .4);
+        background: #fff;
+      }
+      .ref-title {
+        font-weight: 700;
+        font-size: 0.95rem;
+        color: var(--head);
+        margin-bottom: 12px;
+        line-height: 1.4;
+        word-break: break-all;
+      }
+      .ref-stat {
+        font-size: 0.77rem;
+        color: var(--muted);
+        margin-bottom: 4px;
+        font-family: 'IBM Plex Mono', monospace;
+        letter-spacing: 0.02em;
+      }
+      .pagination-controls {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 16px;
+        margin-top: 32px;
+      }
+      .upload-zone:hover { border-color: var(--accent); background: rgba(14, 122, 168, 0.05)!important; }
+
+      @media (max-width: 1100px) {
+        .repo-stats-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 720px) {
+        .repo-stats-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+	    </style>
+
+    <div class="pcap-grid repo-stats-grid" id="repositoryStats">
+      <div class="pcap-ref-card">
+        <div class="ref-stat">Repository</div>
+        <div class="ref-title" id="repoTotalPcaps">Loading...</div>
+        <div class="ref-stat">Total number of indexed and uploaded PCAPs</div>
+      </div>
+      <div class="pcap-ref-card">
+        <div class="ref-stat">Observed IPs</div>
+        <div class="ref-title" id="repoTotalIps">Loading...</div>
+        <div class="ref-stat">Unique IPs aggregated across all captures</div>
+      </div>
+      <div class="pcap-ref-card">
+        <div class="ref-stat">Repository Size</div>
+        <div class="ref-title" id="repoTotalSize">Loading...</div>
+        <div class="ref-stat">Total uploaded data currently represented</div>
+      </div>
+      <div class="pcap-ref-card">
+        <div class="ref-stat">Traffic Volume</div>
+        <div class="ref-title" id="repoTotalPackets">Loading...</div>
+        <div class="ref-stat">Packets counted across all available captures</div>
+      </div>
+    </div>
+
+    <div class="d-flex align-items-center justify-content-between mt-4 mb-2">
+      <h2 style="font-size: 1.5rem; font-weight: 700; margin: 0; color: var(--head);">PCAP Repository</h2>
+      <div style="flex: 1; max-width: 400px; margin: 0 24px;">
+        <div class="input-group">
+          <span class="input-group-text bg-white border-end-0" style="border-radius: 12px 0 0 12px;"><i class="bi bi-search"></i></span>
+          <input type="text" id="libSearch" class="form-control border-start-0" placeholder="Search by filename..." style="border-radius: 0 12px 12px 0; border: 1px solid var(--border); box-shadow: none;">
+        </div>
+      </div>
+      <span class="badge-soft" id="totalPcapsBadge">Loading...</span>
+    </div>
+
+    <div id="pcapGrid" class="pcap-grid">
+      <!-- Cards will be injected here -->
+    </div>
+    
+    <div class="pagination-controls" id="gridPagination" style="display:none;">
+      <button class="btn-soft" id="prevPageBtn" disabled><i class="bi bi-chevron-left"></i> Prev</button>
+      <span id="pageInfo" style="font-size: 0.85rem; color: var(--muted); font-weight: 500;">Page 1</span>
+      <button class="btn-soft" id="nextPageBtn"><i class="bi bi-chevron-down"></i> Next</button>
+    </div>
+
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput = document.getElementById('pcapFile');
+    const uploadForm = document.getElementById('uploadForm');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const selectedFile = document.getElementById('selectedFile');
+    const fileName = document.getElementById('fileName');
+    const fileSize = document.getElementById('fileSize');
+    const clearFile = document.getElementById('clearFile');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    const alertContainer = document.getElementById('alertContainer');
+
+    uploadZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => handleFileSelect(e.target.files[0]));
+
+    uploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadZone.classList.add('dragover');
+    });
+
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+
+    uploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadZone.classList.remove('dragover');
+      handleFileSelect(e.dataTransfer.files[0]);
+    });
+
+    function handleFileSelect(file) {
+      if (!file) return;
+      const validExtensions = ['.pcap', '.pcapng'];
+      const hasValidExtension = validExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
+      if (!hasValidExtension) {
+        showAlert('Please select a valid PCAP file (.pcap or .pcapng)', 'danger');
+        return;
+      }
+
+      fileName.textContent = file.name;
+      fileSize.textContent = formatFileSize(file.size);
+      selectedFile.classList.add('show');
+      uploadBtn.disabled = false;
+    }
+
+    clearFile.addEventListener('click', () => {
+      fileInput.value = '';
+      selectedFile.classList.remove('show');
+      uploadBtn.disabled = true;
+      progressContainer.classList.remove('show');
+      alertContainer.innerHTML = '';
+    });
+
+    uploadForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(uploadForm);
+
+      uploadBtn.disabled = true;
+      progressContainer.classList.add('show');
+      progressBar.style.width = '30%';
+      progressText.textContent = 'Uploading...';
+      alertContainer.innerHTML = '';
+
+      try {
+        const response = await fetch('/upload', { method: 'POST', body: formData });
+        progressBar.style.width = '60%';
+        progressText.textContent = 'Processing with Network Traffic...';
+        const data = await response.json();
+
+        if (response.ok) {
+          progressBar.style.width = '100%';
+          progressText.textContent = 'Complete!';
+          setTimeout(() => {
+            progressBar.classList.remove('progress-bar-animated');
+            progressBar.classList.add('bg-success');
+          }, 500);
+
+          let logsInfo = '<ul class="mb-0">';
+          for (const [logType, count] of Object.entries(data.indexed_logs || {})) {
+            logsInfo += `<li><strong>${logType}</strong>: ${count} records</li>`;
+          }
+          logsInfo += '</ul>';
+
+          showAlert(`
+            <strong>Success!</strong> PCAP file analyzed successfully.
+            <div class="mt-2">
+              <strong>Indexed Logs:</strong>
+              ${logsInfo}
+            </div>
+            <div class="mt-3">
+              <a href="/dashboard?pcap_id=${data.pcap_id}" class="btn btn-sm btn-success me-2"><i class="bi bi-bar-chart-line"></i> View Overview</a>
+              <a href="/details?pcap_id=${data.pcap_id}" class="btn btn-sm btn-outline-success"><i class="bi bi-table"></i> View Details</a>
+            </div>
+          `, 'success');
+        } else {
+          throw new Error(data.error || 'Upload failed');
+        }
+      } catch (error) {
+        progressBar.classList.remove('progress-bar-animated');
+        progressBar.classList.add('bg-danger');
+        progressText.textContent = 'Failed!';
+        showAlert(`<strong>Error:</strong> ${error.message}`, 'danger');
+        uploadBtn.disabled = false;
+      }
+    });
+
+    function formatFileSize(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    function showAlert(message, type) {
+      alertContainer.innerHTML = `
+        <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+          ${message}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      `;
+    }
+
+    
+    
+	    let currentPage = 1;
+	    const perPage = 12;
+    
+    // Parse URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    let searchQuery = urlParams.get('search') || '';
+    
+    const libSearch = document.getElementById('libSearch');
+    if (libSearch && searchQuery) {
+      libSearch.value = searchQuery;
+    }
+
+	    async function loadPcapGrid(page=1) {
+      try {
+        const response = await fetch(`/api/pcaps?page=${page}&per_page=${perPage}&search=${encodeURIComponent(searchQuery)}`);
+        const data = await response.json();
+        
+        currentPage = data.pagination?.page || 1;
+        
+        document.getElementById('totalPcapsBadge').textContent = `${data.pagination?.total || 0} captures`;
+        
+        const grid = document.getElementById('pcapGrid');
+        if (!data.data || data.data.length === 0) {
+          grid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--muted); background: rgba(255,255,255,0.5); border-radius: 16px; border: 1px dashed var(--border);">No captures found.</div>';
+          document.getElementById('gridPagination').style.display = 'none';
+          return;
+	    }
+
+      function formatRepositorySize(bytes) {
+        const numeric = Number(bytes || 0);
+        if (!Number.isFinite(numeric) || numeric <= 0) return '0 GB';
+        return `${(numeric / (1024 ** 3)).toFixed(numeric >= 1024 ** 3 ? 2 : 3)} GB`;
+      }
+
+      function formatCompactNumber(value) {
+        const numeric = Number(value || 0);
+        if (!Number.isFinite(numeric)) return '0';
+        return numeric.toLocaleString();
+      }
+
+      async function loadRepositoryStats() {
+        try {
+          const response = await fetch(`/api/pcaps?page=1&per_page=1000&search=${encodeURIComponent(searchQuery)}`);
+          const payload = await response.json();
+          const rows = Array.isArray(payload.data) ? payload.data : [];
+          const repoStats = payload.repository_stats || {};
+          const totalPcaps = Number(repoStats.total_pcaps ?? payload.pagination?.total ?? rows.length);
+          const totalIps = Number(repoStats.observed_ips ?? rows.reduce((sum, item) => sum + Number(item.ip_count || 0), 0));
+          const totalBytes = Number(repoStats.repository_size ?? rows.reduce((sum, item) => sum + Number(item.size || 0), 0));
+          const totalPackets = Number(repoStats.traffic_volume ?? rows.reduce((sum, item) => sum + Number(item.packets || 0), 0));
+
+          document.getElementById('repoTotalPcaps').textContent = formatCompactNumber(totalPcaps);
+          document.getElementById('repoTotalIps').textContent = formatCompactNumber(totalIps);
+          document.getElementById('repoTotalSize').textContent = formatRepositorySize(totalBytes);
+          document.getElementById('repoTotalPackets').textContent = formatCompactNumber(totalPackets);
+        } catch (err) {
+          console.error('Could not load repository stats', err);
+          document.getElementById('repoTotalPcaps').textContent = '—';
+          document.getElementById('repoTotalIps').textContent = '—';
+          document.getElementById('repoTotalSize').textContent = '—';
+          document.getElementById('repoTotalPackets').textContent = '—';
+        }
+      }
+
+        grid.innerHTML = data.data.map(pcap => {
+          let sizeStr;
+          if (pcap.size > 1024 * 1024) { sizeStr = (pcap.size / (1024 * 1024)).toFixed(1) + ' MB'; }
+          else { sizeStr = (pcap.size / 1024).toFixed(1) + ' KB'; }
+          const duration = pcap.duration != null ? `${pcap.duration}s` : '—';
+          const pkts = pcap.packets != null ? pcap.packets : '—';
+          return `
+            <a href="/dashboard?pcap_id=${pcap.pcap_id}" class="pcap-ref-card">
+              <div class="ref-title">${pcap.filename}</div>
+              <div class="ref-stat">Size: ${sizeStr}</div>
+              <div class="ref-stat">Packets: ${pkts}</div>
+              <div class="ref-stat">Duration: ${duration}</div>
+            </a>
+          `;
+        }).join('');
+
+        document.getElementById('gridPagination').style.display = (data.pagination?.total_pages || 1) > 1 ? 'flex' : 'none';
+        document.getElementById('pageInfo').textContent = `Page ${data.pagination?.page || 1} of ${data.pagination?.total_pages || 1}`;
+        document.getElementById('prevPageBtn').disabled = (data.pagination?.page || 1) <= 1;
+        document.getElementById('nextPageBtn').disabled = (data.pagination?.page || 1) >= (data.pagination?.total_pages || 1);
+
+      } catch (err) {
+        console.error("Could not load PCAP grid", err);
+      }
+    }
+
+    document.getElementById('prevPageBtn').addEventListener('click', () => loadPcapGrid(currentPage - 1));
+    document.getElementById('nextPageBtn').addEventListener('click', () => loadPcapGrid(currentPage + 1));
+
+    let searchTimeout;
+	    libSearch.addEventListener('input', (e) => {
+	      clearTimeout(searchTimeout);
+	      searchTimeout = setTimeout(() => {
+	        searchQuery = e.target.value;
+	        loadPcapGrid(1);
+          loadRepositoryStats();
+	      }, 300);
+	    });
+
+	    loadPcapGrid();
+      loadRepositoryStats();
+
+  </script>
+</body>
+</html>

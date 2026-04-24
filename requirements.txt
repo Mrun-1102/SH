@@ -1,0 +1,12 @@
+Flask
+elasticsearch==8.13.0
+dpkt
+pyzeek
+maxminddb
+python-nmap
+ipwhois
+requests
+dnspython
+nvdlib
+pydnsbl
+python-whois

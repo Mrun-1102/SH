@@ -1,0 +1,1898 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Network Traffic Details</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="https://unpkg.com/vis-network@9.1.9/styles/vis-network.min.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #f6f3ed;
+      --surface: #fffdf8;
+      --surface-2: #f2ede4;
+      --border: #ded7cb;
+      --text: #1e2630;
+      --muted: #6d7684;
+      --head: #101723;
+      --accent: #0e7aa8;
+      --accent-2: #167a61;
+      --warn: #b66a22;
+      --red: #c34d4d;
+      --shadow: 0 18px 40px rgba(17, 24, 39, .06);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'IBM Plex Sans', sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(14, 122, 168, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(22, 122, 97, 0.08), transparent 22%),
+        linear-gradient(180deg, #fbfaf6 0%, var(--bg) 100%);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .26;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, .55) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, .5) 1px, transparent 1px);
+      background-size: 24px 24px;
+      mask-image: linear-gradient(180deg, rgba(0, 0, 0, .55), transparent 85%);
+    }
+
+    .shell {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 18px 22px 28px;
+    }
+
+    .navbar-shell,
+    .panel {
+      background: rgba(255, 253, 248, .9);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .navbar-shell {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      backdrop-filter: blur(14px);
+      position: sticky;
+      top: 12px;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      color: white;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 10px 24px rgba(14, 122, 168, .25);
+      flex-shrink: 0;
+    }
+
+    .brand-copy h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--head);
+    }
+
+    .brand-copy p {
+      margin: 2px 0 0;
+      font-size: .82rem;
+      color: var(--muted);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .nav-links a {
+      text-decoration: none;
+      color: var(--text);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .72rem;
+      font-weight: 600;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+
+    .nav-links a:hover,
+    .nav-links a.active {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow);
+      background: rgba(14, 122, 168, .08);
+      color: var(--accent);
+      border-color: rgba(14, 122, 168, .22);
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 18px 0 0;
+      padding: 14px 16px;
+      background: rgba(255, 253, 248, .88);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .status-label {
+      font-size: .7rem;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .status-copy {
+      font-size: .96rem;
+      font-weight: 600;
+      color: var(--head);
+      line-height: 1.4;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: .84rem;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .status-pill.connected {
+      background: rgba(22, 122, 97, .12);
+      color: #167a61;
+      border-color: rgba(22, 122, 97, .18);
+    }
+
+    .status-pill.disconnected {
+      background: rgba(195, 77, 77, .12);
+      color: #c34d4d;
+      border-color: rgba(195, 77, 77, .18);
+    }
+
+    .page-notice {
+      display: none;
+      margin-top: 16px;
+      padding: 16px 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(14, 122, 168, .18);
+      background: rgba(14, 122, 168, .08);
+      color: var(--ink);
+      box-shadow: var(--shadow);
+    }
+
+    .page-notice.is-visible {
+      display: block;
+    }
+
+    .page-notice.is-error {
+      border-color: rgba(195, 77, 77, .18);
+      background: rgba(195, 77, 77, .08);
+      color: #7f2f2f;
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .section-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .66rem;
+      font-weight: 600;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 6px 0 2px;
+    }
+
+    .section-label::after {
+      content: '';
+      height: 1px;
+      flex: 1;
+      background: var(--border);
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(242, 237, 228, .65), rgba(255, 255, 255, 0));
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: .86rem;
+      font-weight: 700;
+      color: var(--head);
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .panel-body {
+      padding: 16px 18px 18px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .82rem;
+    }
+
+    thead tr {
+      background: var(--surface-2);
+    }
+
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .64rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .77rem;
+      color: var(--text);
+      word-break: break-word;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody tr:hover td {
+      background: rgba(14, 122, 168, .03);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    .table-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .table-pagination .page-info {
+      color: var(--muted);
+      font-size: .84rem;
+    }
+
+    .table-pagination .controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .table-pagination .pager-btn {
+      border: 1px solid rgba(14, 122, 168, .25);
+      background: linear-gradient(135deg, rgba(14, 122, 168, .14), rgba(22, 122, 97, .12));
+      color: var(--accent);
+      border-radius: 12px;
+      padding: 8px 14px;
+      min-width: 84px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease, color .18s ease;
+    }
+
+    .table-pagination .pager-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 22px rgba(14, 122, 168, .16);
+      background: linear-gradient(135deg, rgba(14, 122, 168, .18), rgba(22, 122, 97, .15));
+      color: #0a5e80;
+    }
+
+    .table-pagination .pager-btn:focus-visible {
+      outline: 2px solid rgba(14, 122, 168, .45);
+      outline-offset: 2px;
+    }
+
+    .table-pagination .pager-btn:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+      background: rgba(136, 146, 165, .18);
+      border-color: rgba(136, 146, 165, .24);
+      color: #8a93a2;
+    }
+
+    .table-pagination select {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .72rem;
+      font-weight: 600;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .rows-fixed {
+      color: var(--muted);
+      font-size: .8rem;
+      font-family: 'IBM Plex Mono', monospace;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .badge-soft {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 30px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .65rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      background: rgba(14, 122, 168, .08);
+      color: var(--accent);
+      border: 1px solid rgba(14, 122, 168, .15);
+    }
+
+    .badge-warn {
+      background: rgba(182, 106, 34, .08);
+      color: var(--warn);
+      border-color: rgba(182, 106, 34, .18);
+    }
+
+    .badge-red {
+      background: rgba(195, 77, 77, .08);
+      color: var(--red);
+      border-color: rgba(195, 77, 77, .18);
+    }
+
+    .ip {
+      color: var(--accent);
+    }
+
+    .teal {
+      color: var(--accent-2);
+    }
+
+    .warn {
+      color: var(--warn);
+    }
+
+    .red {
+      color: var(--red);
+    }
+
+    .dim {
+      color: var(--muted);
+    }
+
+    .ip {
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 600;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      text-decoration-color: rgba(14, 122, 168, .2);
+      transition: all 0.2s;
+    }
+
+    .ip:hover {
+      color: var(--accent-2);
+      text-decoration-color: var(--accent-2);
+    }
+
+    .scan-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 15px;
+      margin-bottom: 12px;
+      border: 1px solid var(--border);
+    }
+
+    .intel-subtitle {
+      color: var(--muted);
+      font-size: .9rem;
+      margin-bottom: 14px;
+    }
+
+    .intel-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .intel-card {
+      background: linear-gradient(180deg, rgba(255, 255, 255, .94), rgba(242, 237, 228, .78));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px 16px;
+      position: relative;
+      overflow: hidden;
+      min-height: 116px;
+    }
+
+    .intel-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+    }
+
+    .intel-card .title {
+      font-size: .66rem;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-weight: 700;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+
+    .intel-card .value {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .88rem;
+      font-weight: 600;
+      color: var(--head);
+      line-height: 1.45;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    .scan-summary-table td {
+      font-size: .76rem;
+      padding: 12px;
+    }
+
+    .scan-label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .scan-value {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--head);
+    }
+
+    .break {
+      word-break: break-all;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .summary-card {
+      background: linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(242, 237, 228, .72));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px 16px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .summary-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 3px;
+      background: var(--accent);
+    }
+
+    .summary-card .title {
+      font-size: .66rem;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    .summary-card .value {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .9rem;
+      font-weight: 600;
+      color: var(--head);
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    #map {
+      height: 420px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .map-note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: .8rem;
+    }
+
+    .ip-link {
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-style: dashed;
+      text-underline-offset: 3px;
+    }
+
+    .ip-link:hover {
+      color: #0a5e80;
+    }
+
+    .conn-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(9, 12, 18, .42);
+      backdrop-filter: blur(2px);
+    }
+
+    .conn-modal.is-open {
+      display: flex;
+    }
+
+    .conn-modal-card {
+      width: min(1320px, 96vw);
+      max-height: 92vh;
+      overflow: auto;
+      background: rgba(255, 253, 248, .97);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .conn-modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(242, 237, 228, .65), rgba(255, 255, 255, 0));
+    }
+
+    .conn-modal-title {
+      margin: 0;
+      font-size: .86rem;
+      font-weight: 700;
+      color: var(--head);
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .conn-modal-close {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 6px 10px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .conn-modal-body {
+      padding: 16px 18px 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .conn-chart-wrap {
+      height: 560px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, .62);
+      padding: 10px;
+    }
+
+    #connGraph {
+      width: 100%;
+      height: 100%;
+    }
+
+    @media (max-width: 1220px) {
+      .intel-grid,
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 900px) {
+
+      .two-col,
+      .intel-grid,
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .status-bar {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .shell {
+        padding: 12px;
+      }
+
+      .navbar-shell {
+        position: static;
+      }
+
+      .conn-modal-card {
+        width: 100%;
+        max-height: 94vh;
+      }
+
+      .conn-chart-wrap {
+        height: 380px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="shell">
+    <div class="navbar-shell">
+      <div class="brand">
+        <div class="brand-mark"><i class="bi bi-shield-lock-fill"></i></div>
+        <div class="brand-copy">
+          <h1>Network Traffic Network Analysis</h1>
+          <p>Details page for indicators, protocols, artifacts and sessions</p>
+        </div>
+      </div>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/dashboard{% if selected_pcap_id %}?pcap_id={{ selected_pcap_id|urlencode }}{% endif %}">Overview</a>
+        <a class="active"
+          href="/details{% if selected_pcap_id %}?pcap_id={{ selected_pcap_id|urlencode }}{% endif %}">Details</a>
+        <a href="/report{% if selected_pcap_id %}?pcap_id={{ selected_pcap_id|urlencode }}{% endif %}">Report</a>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div>
+        <div class="status-label">Elasticsearch Status</div>
+        <div class="status-copy">{{ elastic_message }}</div>
+      </div>
+      <div class="status-pill {% if elastic_connected %}connected{% else %}disconnected{% endif %}">
+        {% if elastic_connected %}
+        <i class="bi bi-check-circle-fill"></i>
+        <span>Connected</span>
+        {% else %}
+        <i class="bi bi-x-circle-fill"></i>
+        <span>Not Connected</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="page-notice" id="pageNotice"></div>
+
+    <div class="grid">
+      <div class="section-label">Geo View</div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Top Destination Geo</h2><span class="badge-soft" id="geoN">0</span>
+        </div>
+        <div class="panel-body">
+          <div id="map"></div>
+          <div class="map-note">Map uses placeholder coordinates from destination addresses until real geolocation
+            enrichment is added.</div>
+        </div>
+      </div>
+
+      <div class="section-label">IP Addresses</div>
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Internal IPs</h2><span class="badge-soft" id="intN">0</span>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>IP</th>
+                  <th>Packets</th>
+                  <th>Remarks</th>
+                </tr>
+              </thead>
+              <tbody id="intB"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>External IPs</h2><span class="badge-soft" id="extN">0</span>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>IP</th>
+                  <th>Packets</th>
+                  <th>Country</th>
+                  <th>City</th>
+                  <th>Latitude</th>
+                  <th>Longitude</th>
+                  <th>ISP</th>
+                </tr>
+              </thead>
+              <tbody id="extB"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-label">Protocols & Artifacts</div>
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Protocols</h2><span class="badge-soft" id="protoN">0</span>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Protocol</th>
+                  <th>Packet Count</th>
+                </tr>
+              </thead>
+              <tbody id="protoB"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Ports Identified</h2><span class="badge-soft badge-warn" id="portN">0</span>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Port</th>
+                  <th>Protocol</th>
+                  <th>Usage</th>
+                </tr>
+              </thead>
+              <tbody id="portB"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-label">DNS & Indicators</div>
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>DNS Queries</h2><span class="badge-soft" id="dnsN">0</span>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Domain</th>
+                  <th>Record Type</th>
+                  <th>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody id="dnsB"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Domains Identified</h2><span class="badge-soft badge-warn" id="iocDomN">0</span>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Domain</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody id="iocDomB"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>URLs Identified</h2><span class="badge-soft badge-red" id="iocUrlN">0</span>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Severity</th>
+                  <th>URL</th>
+                  <th>Method</th>
+                  <th>Purpose</th>
+                </tr>
+              </thead>
+              <tbody id="iocUrlB"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Files / Payloads</h2><span class="badge-soft badge-red" id="fpN">0</span>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Filename</th>
+                  <th>Type</th>
+                  <th>Protocol</th>
+                </tr>
+              </thead>
+              <tbody id="fpB"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>User Agents</h2><span class="badge-soft" id="uaN">0</span>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User Agent</th>
+                </tr>
+              </thead>
+              <tbody id="uaB"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>FTP Session</h2><span class="badge-soft badge-warn" id="ftpBadge">—</span>
+          </div>
+          <div class="panel-body">
+            <div id="ftpGrid" class="summary-grid"></div>
+            <div id="ftpEmpty" class="dim" style="display:none;">No FTP session recorded.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn-modal" id="connModal" aria-hidden="true">
+    <div class="conn-modal-card" role="dialog" aria-modal="true" aria-labelledby="connModalTitle">
+      <div class="conn-modal-head">
+        <h3 class="conn-modal-title" id="connModalTitle">Internal IP Connections</h3>
+        <button type="button" class="conn-modal-close" id="connModalClose">Close</button>
+      </div>
+      <div class="conn-modal-body">
+        <div class="dim" id="connModalSummary">Click an internal IP to load connection graph.</div>
+        <div class="conn-chart-wrap">
+          <div id="connGraph"></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Peer IP</th>
+                <th>Type</th>
+                <th>Traffic</th>
+                <th>Country</th>
+                <th>City</th>
+                <th>ISP</th>
+              </tr>
+            </thead>
+            <tbody id="connGraphRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Nmap Scan Modal -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+  <div class="modal fade" id="scanModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width:min(1480px, 96vw);">
+      <div class="modal-content"
+        style="background: rgba(255, 253, 248, .98); border-radius: 20px; border: 1px solid var(--border); box-shadow: var(--shadow);">
+        <div class="modal-header border-bottom-0 pb-0">
+          <h5 class="modal-title" style="font-weight:700; color:var(--head);">
+            IP Intelligence Report - <span id="scanModalIp"></span>
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body pt-3">
+          <div id="scanLoading" class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <div class="mt-3 font-monospace" style="font-size:0.8rem; letter-spacing:0.05em;">SCANNING IN PROGRESS...
+            </div>
+          </div>
+
+          <div id="scanResult" class="d-none">
+            <div class="intel-subtitle" id="scanIntro">Intel for —</div>
+
+            <div class="intel-grid">
+              <div class="intel-card"><div class="title">Country</div><div class="value" id="scanCountry">—</div></div>
+              <div class="intel-card"><div class="title">City</div><div class="value" id="scanCity">—</div></div>
+              <div class="intel-card"><div class="title">ISP</div><div class="value" id="scanISP">—</div></div>
+              <div class="intel-card"><div class="title">ASN</div><div class="value" id="scanASN">—</div></div>
+              <div class="intel-card"><div class="title">Network Owner</div><div class="value" id="scanOwner">—</div></div>
+
+              <div class="intel-card"><div class="title">Network CIDR</div><div class="value" id="scanCIDR">—</div></div>
+              <div class="intel-card"><div class="title">Whois Assigned</div><div class="value" id="scanAssigned">—</div></div>
+              <div class="intel-card"><div class="title">Company Website</div><div class="value" id="scanWebsite">—</div></div>
+              <div class="intel-card"><div class="title">TLD</div><div class="value" id="scanTld">—</div></div>
+              <div class="intel-card"><div class="title">Registrar</div><div class="value" id="scanRegistrar">—</div></div>
+
+              <div class="intel-card"><div class="title">Abuse Details</div><div class="value" id="scanAbuse">—</div></div>
+              <div class="intel-card"><div class="title">Registrant Details</div><div class="value" id="scanRegistrant">—</div></div>
+              <div class="intel-card"><div class="title">Whois Roles</div><div class="value" id="scanRoles">—</div></div>
+              <div class="intel-card"><div class="title">Org Name</div><div class="value" id="scanOrg">—</div></div>
+              <div class="intel-card"><div class="title">Blacklist Check</div><div class="value" id="scanBlacklist">—</div></div>
+            </div>
+
+            <div class="panel" style="border-radius:14px; background:rgba(242, 237, 228, 0.4); margin-bottom: 0;">
+              <div class="panel-head" style="background:none; border-bottom:1px solid var(--border);">
+                <h2>Scan Summary</h2>
+              </div>
+              <div class="panel-body p-0">
+                <table class="m-0 scan-summary-table">
+                  <thead>
+                    <tr>
+                      <th>Open Ports</th>
+                      <th>Filtered Ports</th>
+                      <th>Hostnames</th>
+                      <th>OS Guess</th>
+                      <th>Scan Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td id="scanOpenPorts">—</td>
+                      <td id="scanFilteredPorts">—</td>
+                      <td id="scanHostnames">—</td>
+                      <td id="scanOsGuess">—</td>
+                      <td id="scanStatus">—</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="panel" style="border-radius:14px; background:rgba(242, 237, 228, 0.4); margin-top: 14px; margin-bottom: 0;">
+              <div class="panel-head" style="background:none; border-bottom:1px solid var(--border);">
+                <h2>Open Ports and Services</h2>
+              </div>
+              <div class="panel-body p-0">
+                <table class="m-0">
+                  <thead>
+                    <tr>
+                      <th>Port</th>
+                      <th>Protocol</th>
+                      <th>Service</th>
+                      <th>Version</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="scanPortsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/vis-network@9.1.9/dist/vis-network.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function fmt(v) { return (v === null || v === undefined || v === '') ? '—' : (typeof v === 'number' ? v.toLocaleString() : String(v)); }
+    function fmtTime(v) {
+      if (!v) return '—';
+      try {
+        let date;
+        const numericValue = typeof v === 'number' ? v : (typeof v === 'string' ? Number(v) : NaN);
+        if (Number.isFinite(numericValue)) {
+          // If it looks like a Unix timestamp (seconds or milliseconds)
+          const millis = Math.abs(numericValue) > 9999999999 ? numericValue : numericValue * 1000;
+          date = new Date(millis);
+        } else {
+          date = new Date(v);
+        }
+        
+        if (isNaN(date.getTime())) return fmt(v);
+        
+        // Use ISO-like format but readable for consistency
+        const Y = date.getFullYear();
+        const M = String(date.getMonth() + 1).padStart(2, '0');
+        const D = String(date.getDate()).padStart(2, '0');
+        const h = String(date.getHours()).padStart(2, '0');
+        const m = String(date.getMinutes()).padStart(2, '0');
+        const s = String(date.getSeconds()).padStart(2, '0');
+        
+        return `${Y}-${M}-${D} ${h}:${m}:${s}`;
+      } catch {
+        return fmt(v);
+      }
+    }
+    function row(...cols) { return '<tr>' + cols.map(([v, c]) => `<td class="${c || ''}">${fmt(v)}</td>`).join('') + '</tr>'; }
+    function renderSummary(stats) {
+      if (typeof Chart === 'undefined') return;
+
+      const barOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#6d7684' }, grid: { display: false } },
+          y: { ticks: { color: '#6d7684' }, grid: { color: 'rgba(222, 215, 203, 0.6)' } }
+        }
+      };
+
+      const createChartIfCanvasExists = (canvasId, config) => {
+        const canvas = $(canvasId);
+        if (!canvas) return null;
+        return new Chart(canvas, config);
+      };
+
+      createChartIfCanvasExists('transportChart', {
+        type: 'pie',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderWidth: 2, borderColor: '#fffdf8' }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      });
+      createChartIfCanvasExists('applicationChart', {
+        type: 'bar',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.8 }] },
+        options: barOptions
+      });
+      createChartIfCanvasExists('directionChart', {
+        type: 'pie',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderWidth: 2, borderColor: '#fffdf8' }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      });
+      createChartIfCanvasExists('dnsChart', {
+        type: 'bar',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.8 }] },
+        options: barOptions
+      });
+      createChartIfCanvasExists('urlChart', {
+        type: 'bar',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.8 }] },
+        options: barOptions
+      });
+    }
+    function empty(cols) { return `<tr><td colspan="${cols}" class="dim">No data</td></tr>`; }
+    async function api(url) {
+      const r = await fetch(url);
+      if (!r.ok && r.status !== 202) throw new Error(`Request failed: ${r.status}`);
+      return r.json();
+    }
+
+    function isValidGeoPoint(latitude, longitude) {
+      const lat = Number(latitude);
+      const lon = Number(longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+      if (lat === 0 && lon === 0) return false;
+      return true;
+    }
+
+    function formatCoordinate(value, pairedValue) {
+      const numeric = Number(value);
+      const pairedNumeric = Number(pairedValue);
+      if (!Number.isFinite(numeric) || !Number.isFinite(pairedNumeric)) return '—';
+      if (numeric === 0 && pairedNumeric === 0) return '—';
+      return numeric.toFixed(5);
+    }
+
+    function getSelectedPcapId() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('pcap_id') || '';
+    }
+
+    const countryDisplay = (function createCountryDisplay() {
+      let display = null;
+      try {
+        display = new Intl.DisplayNames(['en'], { type: 'region' });
+      } catch {
+        display = null;
+      }
+
+      return function toCountryName(value) {
+        const raw = String(value || '').trim();
+        if (!raw) return '—';
+
+        const code = raw.toUpperCase();
+        if (/^[A-Z]{2}$/.test(code) && display) {
+          const expanded = display.of(code);
+          if (expanded && expanded !== code) {
+            return `${expanded} (${code})`;
+          }
+        }
+
+        return raw;
+      };
+    })();
+
+    function renderGeoMap(externalIps) {
+      const map = L.map('map').setView([20, 0], 2);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors, Elastic Maps Service',
+        maxZoom: 19,
+      }).addTo(map);
+
+      const markers = (externalIps || [])
+        .filter((item) => isValidGeoPoint(item.latitude, item.longitude))
+        .map((item) => ({
+          lat: Number(item.latitude),
+          lng: Number(item.longitude),
+          count: Number(item.packet_count || 1),
+          ip: item.ip || 'Unknown IP',
+          country: countryDisplay(item.country || 'Unknown country'),
+          isp: item.isp || 'Unknown ISP',
+          city: item.city || item.country || 'Unknown location',
+        }));
+
+      $('geoN').textContent = markers.length;
+
+      if (markers.length === 0) {
+        return;
+      }
+
+      const counts = markers.map((item) => Math.max(1, Number(item.count) || 1));
+      const minCount = Math.min(...counts);
+      const maxCount = Math.max(...counts);
+      const minLog = Math.log1p(minCount);
+      const maxLog = Math.log1p(maxCount);
+      const minRadius = 9;
+      const maxRadius = 24;
+
+      function normalizedRadius(count) {
+        const safeCount = Math.max(1, Number(count) || 1);
+        if (minLog === maxLog) {
+          return (minRadius + maxRadius) / 2;
+        }
+        const scaled = (Math.log1p(safeCount) - minLog) / (maxLog - minLog);
+        return minRadius + scaled * (maxRadius - minRadius);
+      }
+
+      function colorForCount(count) {
+        const safeCount = Math.max(1, Number(count) || 1);
+        if (minLog === maxLog) {
+          return '#fd7e14';
+        }
+        const scaled = (Math.log1p(safeCount) - minLog) / (maxLog - minLog);
+        if (scaled >= 0.7) return '#dc3545';
+        if (scaled >= 0.35) return '#fd7e14';
+        return '#ffc107';
+      }
+
+      const bounds = [];
+      markers.forEach((m) => {
+        const markerColor = colorForCount(m.count);
+        const circle = L.circleMarker([m.lat, m.lng], {
+          color: markerColor,
+          fillColor: markerColor,
+          fillOpacity: 0.45,
+          radius: normalizedRadius(m.count),
+          weight: 2,
+        }).addTo(map);
+
+        circle.bindPopup(`<b>${m.city}</b><br>IP: ${m.ip}<br>City: ${m.city}<br>ISP: ${m.isp}<br>Latitude: ${m.lat.toFixed(5)}<br>Longitude: ${m.lng.toFixed(5)}<br>Packets: ${m.count}`);
+        bounds.push([m.lat, m.lng]);
+      });
+
+      if (bounds.length > 0) {
+        map.fitBounds(bounds, { padding: [24, 24], maxZoom: 5 });
+      }
+    }
+
+    const paginationState = {};
+
+    function ensurePaginationControls(targetId) {
+      const tbody = $(targetId);
+      if (!tbody) return null;
+
+      const panelBody = tbody.closest('.panel-body');
+      if (!panelBody) return null;
+
+      let pager = panelBody.querySelector(`.table-pagination[data-target="${targetId}"]`);
+      if (pager) return pager;
+
+      pager = document.createElement('div');
+      pager.className = 'table-pagination';
+      pager.setAttribute('data-target', targetId);
+      pager.innerHTML = `
+        <div class="page-info">Page 1 of 1</div>
+        <div class="controls">
+          <span class="rows-fixed">20 rows</span>
+          <button class="btn-soft pager-btn prev" type="button">Prev</button>
+          <button class="btn-soft pager-btn next" type="button">Next</button>
+        </div>
+      `;
+
+      const prevBtn = pager.querySelector('.prev');
+      const nextBtn = pager.querySelector('.next');
+
+      prevBtn.addEventListener('click', () => {
+        const state = paginationState[targetId] || { page: 1, perPage: 20 };
+        state.page = Math.max((state.page || 1) - 1, 1);
+        paginationState[targetId] = state;
+        renderCurrentDetails();
+      });
+
+      nextBtn.addEventListener('click', () => {
+        const state = paginationState[targetId] || { page: 1, perPage: 20 };
+        state.page = (state.page || 1) + 1;
+        paginationState[targetId] = state;
+        renderCurrentDetails();
+      });
+
+      panelBody.appendChild(pager);
+      return pager;
+    }
+
+    function renderTableRows(targetId, items, builder, emptyCols) {
+      const normalized = Array.isArray(items) ? items : [];
+      const state = paginationState[targetId] || { page: 1, perPage: 20 };
+      paginationState[targetId] = state;
+
+      const total = normalized.length;
+      const totalPages = Math.max(Math.ceil(total / state.perPage), 1);
+      state.page = Math.min(Math.max(state.page, 1), totalPages);
+
+      const start = (state.page - 1) * state.perPage;
+      const end = start + state.perPage;
+      const visible = normalized.slice(start, end);
+
+      $(targetId).innerHTML = visible.length ? visible.map(builder).join('') : empty(emptyCols);
+
+      const pager = ensurePaginationControls(targetId);
+      if (!pager) return;
+
+      const info = pager.querySelector('.page-info');
+      const prevBtn = pager.querySelector('.prev');
+      const nextBtn = pager.querySelector('.next');
+
+      info.textContent = `Page ${state.page} of ${totalPages} (${total.toLocaleString()} rows)`;
+      prevBtn.disabled = state.page <= 1;
+      nextBtn.disabled = state.page >= totalPages;
+
+      const showControls = total > 0;
+      pager.style.display = showControls ? 'flex' : 'none';
+    }
+
+    let currentDetailsData = null;
+    let connGraphNetwork = null;
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function setTextIfPresent(id, value) {
+      const element = $(id);
+      if (!element) return;
+      element.textContent = fmt(value);
+    }
+
+    function setPageNotice(message, isError = false) {
+      const notice = $('pageNotice');
+      if (!notice) return;
+      notice.textContent = String(message || '').trim();
+      notice.classList.toggle('is-visible', Boolean(message));
+      notice.classList.toggle('is-error', Boolean(message) && isError);
+    }
+
+    function getEmailDomain(email) {
+      const raw = String(email || '').trim();
+      if (!raw.includes('@')) return '';
+      return raw.split('@').pop().toLowerCase();
+    }
+
+    function formatMultiline(lines) {
+      const values = (lines || []).map((item) => String(item || '').trim()).filter(Boolean);
+      return values.length ? values.join('\n') : '—';
+    }
+
+    function classifyTld(domain) {
+      const host = String(domain || '').trim().toLowerCase();
+      if (!host || !host.includes('.')) return '—';
+      const tld = host.split('.').pop().toUpperCase();
+      const common = {
+        COM: 'Commercial TLD',
+        NET: 'Network TLD',
+        ORG: 'Organization TLD',
+        CO: 'Company TLD',
+        IO: 'Technology TLD',
+        GOV: 'Government TLD',
+        EDU: 'Education TLD'
+      };
+      return common[tld] ? `${tld} (${common[tld]})` : tld;
+    }
+
+    function closeConnModal() {
+      const modal = $('connModal');
+      modal.classList.remove('is-open');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    async function showConnectionsForInternalIp(ip) {
+      const modal = $('connModal');
+      const summary = $('connModalSummary');
+      const rows = $('connGraphRows');
+      const pcapId = currentDetailsData?.file_id || getSelectedPcapId() || '';
+      modal.classList.add('is-open');
+      modal.setAttribute('aria-hidden', 'false');
+      summary.textContent = `Loading Elasticsearch connections for ${ip}...`;
+      rows.innerHTML = '<tr><td colspan="6" class="dim">Loading...</td></tr>';
+
+      const params = new URLSearchParams();
+      if (pcapId) params.set('pcap_id', pcapId);
+      const response = await api(`/api/pcap/internal/${encodeURIComponent(ip)}/connections?${params.toString()}`);
+      const edges = Array.isArray(response?.data) ? response.data : [];
+
+      summary.textContent = `${edges.length} peer connection(s) found for internal host ${ip}`;
+      if (edges.length === 0) {
+        rows.innerHTML = '<tr><td colspan="6" class="dim">No Elasticsearch connection data found for this internal IP.</td></tr>';
+        if (connGraphNetwork) {
+          connGraphNetwork.destroy();
+          connGraphNetwork = null;
+        }
+        $('connGraph').innerHTML = '';
+        return;
+      }
+
+      const maxTraffic = Math.max(...edges.map((item) => Number(item.internal_packet_count || 0)), 1);
+      const nodes = [
+        {
+          id: `internal:${ip}`,
+          label: ip,
+          title: `Internal IP: ${ip}`,
+          shape: 'dot',
+          size: 24,
+          color: {
+            background: '#167a61',
+            border: '#0f5b48',
+            highlight: { background: '#1c9274', border: '#0f5b48' },
+          },
+          font: { color: '#0d1b2a', face: 'IBM Plex Mono' },
+        },
+      ];
+
+      const graphEdges = [];
+      edges.forEach((item, index) => {
+        const peerIp = item.external_ip || `unknown-${index}`;
+        const traffic = Number(item.internal_packet_count || 0);
+        const edgeWeight = 1 + (traffic / maxTraffic) * 7;
+        const nodeSize = 12 + (traffic / maxTraffic) * 10;
+        const isInternalPeer = String(item.peer_type || '').toLowerCase() === 'internal';
+        const peerNodeId = `${isInternalPeer ? 'internal' : 'external'}:${peerIp}:${index}`;
+
+        nodes.push({
+          id: peerNodeId,
+          label: peerIp,
+          title: `${peerIp}\nType: ${isInternalPeer ? 'Internal' : 'External'}\nTraffic: ${traffic.toLocaleString()} packets`,
+          shape: 'dot',
+          size: nodeSize,
+          color: {
+            background: isInternalPeer ? '#b66a22' : '#0e7aa8',
+            border: isInternalPeer ? '#8d541b' : '#0a5e80',
+            highlight: { background: isInternalPeer ? '#d08432' : '#2b95c4', border: isInternalPeer ? '#8d541b' : '#0a5e80' },
+          },
+          font: { color: '#0d1b2a', face: 'IBM Plex Mono' },
+        });
+
+        graphEdges.push({
+          from: `internal:${ip}`,
+          to: peerNodeId,
+          width: edgeWeight,
+          color: { color: isInternalPeer ? 'rgba(182, 106, 34, 0.55)' : 'rgba(14, 122, 168, 0.55)', highlight: isInternalPeer ? '#b66a22' : '#0e7aa8' },
+          arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+          smooth: { type: 'dynamic' },
+        });
+      });
+
+      const graphContainer = $('connGraph');
+      if (connGraphNetwork) {
+        connGraphNetwork.destroy();
+      }
+
+      connGraphNetwork = new vis.Network(graphContainer, { nodes, edges: graphEdges }, {
+        autoResize: true,
+        nodes: {
+          borderWidth: 2,
+          shadow: true,
+        },
+        edges: {
+          shadow: false,
+        },
+        interaction: {
+          hover: true,
+          navigationButtons: true,
+          keyboard: true,
+        },
+        physics: {
+          enabled: true,
+          barnesHut: {
+            springLength: 170,
+            springConstant: 0.028,
+            damping: 0.4,
+          },
+          stabilization: {
+            iterations: 160,
+          },
+        },
+        layout: {
+          improvedLayout: true,
+        },
+      });
+
+      rows.innerHTML = edges.map((item) => row(
+        [item.external_ip || '—', 'ip'],
+        [String(item.peer_type || 'external').toUpperCase(), 'dim'],
+        [item.internal_packet_count || 0],
+        [countryDisplay(item.country), 'dim'],
+        [item.city || '—', 'dim'],
+        [item.isp || '—', 'dim']
+      )).join('');
+    }
+
+    function renderCurrentDetails() {
+      const data = currentDetailsData || {};
+      renderTableRows('extB', data.external_ips || [], (item) => row(
+        [item.ip, 'ip'],
+        [item.packet_count],
+        [countryDisplay(item.country), 'dim'],
+        [item.city || '—', 'dim'],
+        [formatCoordinate(item.latitude, item.longitude), 'dim'],
+        [formatCoordinate(item.longitude, item.latitude), 'dim'],
+        [item.isp || '—', 'dim']
+      ), 7);
+      renderTableRows('intB', data.internal_ips || [], (item) => {
+        const ip = String(item.ip || '');
+        return `<tr><td><span class="ip-link" data-internal-ip="${escapeHtml(ip)}">${fmt(ip || '—')}</span></td><td>${fmt(item.packet_count)}</td><td class="dim">${fmt(item.remarks || '—')}</td></tr>`;
+      }, 3);
+      renderTableRows('dnsB', data.dns_queries || [], (item) => row([item.domain, 'teal'], [item.record_type, 'dim'], [fmtTime(item.timestamp), 'dim']), 3);
+      renderTableRows('iocDomB', data.ioc_domains || [], (item) => row([item.domain, 'warn'], [item.reason, 'dim']), 2);
+      renderTableRows('iocUrlB', data.ioc_urls || [], (item) => {
+        const url = String(item.url || '');
+        const severity = /exfil|credential|password|payload|beacon|c2|upload/i.test(`${item.purpose || ''} ${url}`) ? 'HIGH' : (/fingerprint|recon|lookup|staging|notify/i.test(`${item.purpose || ''} ${url}`) ? 'MED' : 'LOW');
+        const severityClass = severity === 'HIGH' ? 'badge-red' : (severity === 'MED' ? 'badge-warn' : 'badge-soft');
+        return `<tr><td><span class="badge-soft ${severityClass}">${severity}</span></td><td class="red break">${fmt(url)}</td><td class="dim">${fmt(item.method)}</td><td>${fmt(item.purpose)}</td></tr>`;
+      }, 4);
+      renderTableRows('protoB', data.protocols || [], (item) => row([item.protocol, 'teal'], [item.packet_count]), 2);
+      renderTableRows('portB', data.ports || [], (item) => row([item.port, 'warn'], [item.protocol, 'dim'], [item.usage]), 3);
+      renderTableRows('uaB', data.user_agents || [], (item) => row([item.user_agent, 'dim break']), 1);
+      renderTableRows('fpB', data.file_payloads || [], (item) => {
+        const proto = String(item.protocol || '').trim();
+        const swapped = String(item.destination_ip || '').trim();
+        const protocolDisplay = (!proto || ['unknown', '-', 'n/a'].includes(proto.toLowerCase())) ? (swapped || '—') : proto;
+        return row([item.filename, 'red break'], [item.type, 'warn'], [protocolDisplay, 'dim']);
+      }, 3);
+    }
+
+    function renderFTP(ftp) {
+      const data = ftp && typeof ftp === 'object' ? ftp : {};
+      const entries = [
+        { label: 'Source IP', value: data.source_ip },
+        { label: 'Destination IP', value: data.destination_ip },
+        { label: 'Port', value: data.port },
+        { label: 'Server Banner', value: data.server_banner },
+        { label: 'Username', value: data.username },
+        { label: 'Password', value: data.password },
+        { label: 'Command', value: data.command },
+        { label: 'File Transferred', value: data.file_transferred },
+        { label: 'Data Channel', value: data.data_channel },
+        { label: 'Data Type', value: data.data_type },
+      ].filter((item) => item.value !== undefined && item.value !== null && item.value !== '');
+
+      if (entries.length === 0) {
+        $('ftpBadge').textContent = 'None';
+        $('ftpGrid').innerHTML = '';
+        $('ftpEmpty').style.display = 'block';
+        return;
+      }
+
+      $('ftpBadge').textContent = 'Active';
+      $('ftpEmpty').style.display = 'none';
+      $('ftpGrid').innerHTML = entries.map((item) => `
+        <div class="summary-card">
+          <div class="title">${item.label}</div>
+          <div class="value">${fmt(item.value)}</div>
+        </div>
+      `).join('');
+    }
+
+    async function loadDetails() {
+      let pcapId = getSelectedPcapId();
+      if (!pcapId) {
+        const latestResp = await api('/api/pcap/latest');
+        pcapId = latestResp?.data?.file_id || '';
+        if (pcapId) {
+          const nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.set('pcap_id', pcapId);
+          window.history.replaceState({}, '', nextUrl.toString());
+        }
+      }
+
+      if (!pcapId) {
+        setPageNotice('No Elasticsearch dashboard data is available yet. Upload a PCAP or backfill existing captures into the pcap-dashboard index.', true);
+        return;
+      }
+
+      const [dashboardResp, filesResp] = await Promise.all([
+        api(`/api/pcap/${encodeURIComponent(pcapId)}`),
+        api(`/api/pcap/${encodeURIComponent(pcapId)}/files`)
+      ]);
+
+      const data = {
+        ...(dashboardResp.data || {}),
+        file_payloads: filesResp.data || []
+      };
+
+      currentDetailsData = data;
+      setPageNotice(`Showing dashboard data for capture ${pcapId}.`);
+
+      $('extN').textContent = (data.external_ips || []).length;
+      $('intN').textContent = (data.internal_ips || []).length;
+      $('dnsN').textContent = (data.dns_queries || []).length;
+      $('iocDomN').textContent = (data.ioc_domains || []).length;
+      $('iocUrlN').textContent = (data.ioc_urls || []).length;
+      $('protoN').textContent = (data.protocols || []).length;
+      $('portN').textContent = (data.ports || []).length;
+      $('uaN').textContent = (data.user_agents || []).length;
+      $('fpN').textContent = (data.file_payloads || []).length;
+
+      renderSummary(data);
+      renderCurrentDetails();
+      renderGeoMap(data.external_ips || []);
+
+      renderFTP(data.ftp_session || {});
+    }
+
+    let scanPollTimer = null;
+
+    async function triggerScan(ip) {
+      if (!ip || ip === '-' || ip === '—') return;
+
+      if (scanPollTimer) clearTimeout(scanPollTimer);
+
+      const modalElement = $('scanModal');
+      const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+      $('scanModalIp').textContent = ip;
+      setTextIfPresent('scanIntro', `Intel for ${ip}`);
+      $('scanLoading').classList.remove('d-none');
+      $('scanResult').classList.add('d-none');
+      
+      if (!modalElement.classList.contains('show')) {
+        modal.show();
+      }
+
+      try {
+        const res = await api(`/api/ip/scan/${ip}`);
+        
+        if (!res.success && (res.error || '').toLowerCase().includes('gathered')) {
+          showScanPending(ip);
+          scanPollTimer = setTimeout(() => triggerScan(ip), 5000);
+          return;
+        }
+
+        if (res.success) {
+          const data = res.data;
+          renderScanResult(data);
+          $('scanLoading').classList.add('d-none');
+          $('scanResult').classList.remove('d-none');
+        } else {
+          throw new Error(res.error);
+        }
+      } catch (err) {
+        console.error("Scan failed", err);
+        showScanError(String(err?.message || err || 'Unable to load intelligence'));
+      }
+    }
+
+    function showScanPending(ip) {
+       $('scanLoading').innerHTML = `
+        <div class="p-5 text-center">
+          <div class="spinner-grow text-primary mb-3" role="status" style="width: 3rem; height: 3rem;"></div>
+          <h4 style="font-weight:700; color:var(--head);">Deep Intelligence Gathering</h4>
+          <p class="dim mt-3" style="font-size:0.9rem; max-width:400px; margin:0 auto;">
+            We are currently gathering WHOIS, Geo, and Port intelligence for <strong>${ip}</strong>.
+          </p>
+          <div class="mt-4 p-3" style="background:rgba(14, 122, 168, 0.05); border-radius:12px; border:1px dashed var(--border);">
+            <span class="font-monospace" style="font-size:0.75rem; letter-spacing:0.05em; color:var(--accent);">STATUS: AUTO-POLLING ACTIVATED</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function showScanError(message) {
+       $('scanLoading').innerHTML = `
+        <div class="p-5 text-center">
+          <i class="bi bi-exclamation-triangle-fill text-danger" style="font-size:3rem;"></i>
+          <h4 class="mt-3" style="font-weight:700; color:var(--head);">Intelligence Error</h4>
+          <div class="text-danger p-3 mt-3" style="background:rgba(195, 77, 77, 0.05); border-radius:8px; font-family:monospace; font-size:0.85rem;">
+            ${message}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderScanResult(data) {
+          const geo = data.geo || {};
+          const whois = data.whois || {};
+          const domain = data.domain || whois.domain_whois || {};
+          const details = data.details || {};
+          const hostnames = Array.isArray(details.hostnames) ? details.hostnames : [];
+          const roles = Array.isArray(whois.roles) ? whois.roles : [];
+          const ports = Array.isArray(data.ports) ? data.ports : [];
+          const openPorts = ports.filter((p) => String(p.state || '').toLowerCase() === 'open');
+          const filteredPorts = ports.filter((p) => String(p.state || '').toLowerCase() === 'filtered');
+          const primaryEmail = whois.abuse_email || whois.technical_contact || whois.email || '';
+          const websiteDomain = whois.website || whois.registered_domain || domain.domain || getEmailDomain(primaryEmail);
+
+          const score = data.risk_score || 0;
+          let riskColor = '#167a61';
+          let riskText = 'LOW RISK';
+          if (score > 60) { riskColor = '#c34d4d'; riskText = 'CRITICAL RISK'; }
+          else if (score > 30) { riskColor = '#b66a22'; riskText = 'SUSPICIOUS'; }
+          
+          $('scanModalIp').innerHTML = `${data.ip} <span class="badge-soft" style="background:${riskColor}15; color:${riskColor}; border-color:${riskColor}40; margin-left:10px; font-size:0.7rem; vertical-align:middle;">${riskText} (${score}/100)</span>`;
+          setTextIfPresent('scanIntro', `Intel for ${data.ip}`);
+          setTextIfPresent('scanCountry', geo.country || '—');
+          setTextIfPresent('scanCity', geo.city || '—');
+          setTextIfPresent('scanISP', geo.isp || whois.org || '—');
+          setTextIfPresent('scanASN', data.asn || whois.asn || '—');
+          setTextIfPresent('scanOwner', whois.network_owner || whois.org || geo.isp || '—');
+          setTextIfPresent('scanCIDR', whois.cidr || details.service_provider?.cidr || '—');
+          setTextIfPresent('scanAssigned', fmtTime(whois.registered || domain.creation_date || data.scan_time));
+          setTextIfPresent('scanWebsite', websiteDomain || '—');
+          setTextIfPresent('scanTld', whois.tld ? classifyTld(`example.${String(whois.tld).toLowerCase()}`) : classifyTld(websiteDomain));
+          setTextIfPresent('scanRegistrar', whois.registrar || domain.registrar || details.service_provider?.registrar || '—');
+          setTextIfPresent('scanOrg', whois.org || domain.org || whois.name || domain.name || '—');
+          setTextIfPresent('scanBlacklist', (data.dnsbl && data.dnsbl.listed) ? `Listed (${data.dnsbl.total_listings || 0})` : `Not listed (${data.dnsbl?.total_listings || 0})`);
+          setTextIfPresent('scanRoles', roles.length ? roles.join(', ') : '—');
+          setTextIfPresent('scanHostnames', hostnames.length ? hostnames.map((item) => item.name || item.hostname || item).filter(Boolean).join(', ') : '—');
+          setTextIfPresent('scanOsGuess', data.os || details.os_details?.best_match || 'Unknown');
+          setTextIfPresent('scanStatus', data.status || 'ok');
+          setTextIfPresent('scanOpenPorts', openPorts.length ? openPorts.map((p) => `${p.port}/${p.protocol} (${p.service || p.state || 'open'})`).join(', ') : '—');
+          setTextIfPresent('scanFilteredPorts', filteredPorts.length ? filteredPorts.map((p) => `${p.port}/${p.protocol}`).join(', ') : '—');
+
+          setTextIfPresent('scanAbuse', formatMultiline([
+            whois.abuse_name ? `Name: ${whois.abuse_name}` : '',
+            whois.abuse_email ? `Email: ${whois.abuse_email}` : (whois.email ? `Email: ${whois.email}` : ''),
+            whois.abuse_address ? `Address: ${whois.abuse_address}` : ''
+          ]));
+
+          setTextIfPresent('scanRegistrant', formatMultiline([
+            (whois.name || domain.name) ? `Name: ${whois.name || domain.name}` : '',
+            (whois.address || domain.address) ? `Address: ${whois.address || domain.address}` : ''
+          ]));
+
+          function escapeHtml(text) {
+              const div = document.createElement('div');
+              div.textContent = text || '';
+              return div.innerHTML;
+          }
+
+          // Open Ports & Enhanced Service Data
+          let portsHtml = ports.map(p => {
+              let extra = '';
+              if (p.http && p.http.title) {
+                  extra += `<div class="mt-1" style="font-size:0.65rem;"><span class="badge-soft" style="background:rgba(22, 122, 97, 0.08); color:var(--accent-2); border-color:rgba(22, 122, 97, 0.2);">HTTP</span> <span class="dim">Title:</span> <span style="color:var(--head); font-weight:500;">${escapeHtml(p.http.title)}</span></div>`;
+              }
+              if (p.tls && p.tls.subject) {
+                   let subject = 'Yes';
+                   try { 
+                     subject = p.tls.subject[0][0][1];
+                   } catch(e) {}
+                   extra += `<div class="mt-1" style="font-size:0.65rem;"><span class="badge-soft" style="background:rgba(14, 122, 168, 0.08); color:var(--accent); border-color:rgba(14, 122, 168, 0.2);">TLS</span> <span class="dim">Cert:</span> <span style="color:var(--head); font-weight:500;">${escapeHtml(subject)}</span></div>`;
+              }
+              
+              // CVEs for this port
+              if (p.cves && p.cves.length > 0) {
+                  extra += `<div class="mt-1 d-flex flex-wrap gap-1" style="margin-top: 6px !important;">`;
+                  p.cves.slice(0, 3).forEach(cve => {
+                      const severityClass = (cve.severity || '').toLowerCase() === 'critical' ? 'badge-red' : 'badge-warn';
+                      extra += `<span class="badge-soft ${severityClass}" style="font-size:0.62rem; padding:1px 6px; border-radius:4px;">${cve.id}</span>`;
+                  });
+                  if (p.cves.length > 3) extra += `<span class="dim" style="font-size:0.62rem; font-weight:600; padding-top:2px;">+${p.cves.length - 3} MORE</span>`;
+                  extra += `</div>`;
+              }
+
+              return `
+                <tr>
+                  <td style="vertical-align: middle;"><span class="badge-soft" style="font-size:0.75rem; border-radius:6px; padding:3px 8px; background:rgba(14, 122, 168, 0.1); border:1px solid rgba(14, 122, 168, 0.2); font-weight:700;">${p.port}</span></td>
+                  <td style="vertical-align: middle; font-weight:500; font-family:'IBM Plex Mono'; opacity:0.8;">${p.protocol.toUpperCase()}</td>
+                  <td><div style="font-weight:700; color:var(--head);">${escapeHtml(p.service || 'unknown')}</div>${extra}</td>
+                  <td class="dim" style="font-size:0.75rem;">${escapeHtml(p.version || p.product || '—')}</td>
+                  <td style="vertical-align: middle;"><span class="badge-soft ${p.state === 'open' ? 'connected' : 'disconnected'}" style="min-width:64px; text-align:center; padding: 4px 0; border-radius:6px;">${p.state.toUpperCase()}</span></td>
+                </tr>
+              `;
+          }).join('');
+
+          // Reputation Data (DNSBL)
+          const dnsbl = data.dnsbl || {};
+          if (dnsbl.listed) {
+              portsHtml += `
+                <tr style="background: rgba(195, 77, 77, 0.04);">
+                  <td colspan="5" style="font-size:0.78rem; font-weight:700; color:var(--red); padding: 14px; border-top: 1px solid rgba(195, 77, 77, 0.1);">
+                    <i class="bi bi-exclamation-octagon-fill" style="margin-right:8px;"></i>
+                    SECURITY ALERT: THIS IP IS LISTED ON ${dnsbl.total_listings} REPUTATION BLACKLISTS.
+                  </td>
+                </tr>
+              `;
+          }
+
+          $('scanPortsBody').innerHTML = portsHtml || '<tr><td colspan="5" class="text-center py-5"><div class="dim mb-2"><i class="bi bi-shield-slash" style="font-size:1.5rem;"></i></div><div class="dim" style="font-size:0.85rem;">No open ports or active services were detected during this scan.</div></td></tr>';
+    }
+    
+    // Stop polling if modal is closed
+    document.getElementById('scanModal').addEventListener('hidden.bs.modal', function () {
+        if (scanPollTimer) {
+            clearTimeout(scanPollTimer);
+            scanPollTimer = null;
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+      // Find parent with 'ip' class if nested
+      const ipElem = e.target.closest('.ip');
+      if (ipElem) {
+        // Prevent trigger if it's the internal IP connection trigger
+        if (ipElem.dataset.type === 'internal') return;
+
+        triggerScan(ipElem.textContent);
+      }
+    });
+
+    loadDetails().catch((error) => {
+      console.error(error);
+      setPageNotice(`Unable to load capture details: ${error.message}`, true);
+    });
+
+    $('intB').addEventListener('click', (event) => {
+      const trigger = event.target.closest('[data-internal-ip]');
+      if (!trigger) return;
+      const ip = trigger.getAttribute('data-internal-ip');
+      if (!ip) return;
+      showConnectionsForInternalIp(ip).catch((error) => {
+        console.error(error);
+        $('connModalSummary').textContent = `Failed to load connections for ${ip}.`;
+        $('connGraphRows').innerHTML = '<tr><td colspan="6" class="dim">Unable to load Elasticsearch data.</td></tr>';
+      });
+    });
+
+    $('connModalClose').addEventListener('click', closeConnModal);
+    $('connModal').addEventListener('click', (event) => {
+      if (event.target.id === 'connModal') {
+        closeConnModal();
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeConnModal();
+      }
+    });
+  </script>
+</body>
+
+</html>

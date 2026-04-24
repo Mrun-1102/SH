@@ -1,0 +1,51 @@
+# Virtual environments
+venv/
+myenv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+
+# Environment variables
+.env
+
+# Zeek / generated data
+flask-app/zeek_logs/
+flask-app/zeek_uploads/
+zeek_logs/
+zeek_uploads/
+
+# PCAP data
+*.pcap
+*.pcapng
+my_pcaps/data/
+
+
+# Node (if frontend exists)
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local Codex metadata
+.codex
+
+# Generated Zeek data
+/flask-app/zeek_logs/
+/flask-app/zeek_uploads/
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

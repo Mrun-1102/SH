@@ -1,0 +1,841 @@
+import os
+import json
+import math
+from datetime import datetime, timezone
+from elasticsearch import Elasticsearch
+from elasticsearch.exceptions import NotFoundError
+from elasticsearch.helpers import bulk
+
+# ---------------- CONFIG ----------------
+ES_HOST = os.getenv("ES_HOST", "http://localhost:9200")
+ES_API_KEY = os.getenv("ELASTIC_API_KEY")
+ES_USER = os.getenv("ELASTIC_USER")
+ES_PASSWORD = os.getenv("ELASTIC_PASSWORD")
+
+# Granular Indexes
+PCAP_CAPTURES_INDEX = "pcap-captures"  # Metadata summary
+PCAP_IPS_INDEX = "pcap-ips"            # Granular IP records
+PCAP_DNS_INDEX = "pcap-dns"            # Granular DNS/URL records
+PCAP_DASHBOARD_INDEX = "pcap-dashboard"  # Full dashboard payload
+
+# Legacy Index (for reference/compatibility)
+PCAP_INDEX = "pcap-analysis"
+SCAN_INDEX = "ip-intelligence-latest"
+SCAN_INDEX_LEGACY = "ip-scan-results"
+
+# ---------------- CONNECTION ----------------
+_es_instance = None
+
+def get_es():
+    global _es_instance
+    if _es_instance is not None:
+        return _es_instance
+
+    try:
+        auth = None
+        if ES_API_KEY:
+            auth = {"api_key": ES_API_KEY}
+        elif ES_USER and ES_PASSWORD:
+            auth = (ES_USER, ES_PASSWORD)
+
+        es = Elasticsearch(
+            ES_HOST,
+            basic_auth=auth if isinstance(auth, tuple) else None,
+            api_key=auth["api_key"] if isinstance(auth, dict) else None,
+            verify_certs=False,
+            request_timeout=60,
+            max_retries=3,
+            retry_on_timeout=True
+        )
+
+        if es.ping():
+            _es_instance = es
+        else:
+            _es_instance = None
+    except Exception as e:
+        print(f"✗ ES connection error: {e}")
+        _es_instance = None
+
+    return _es_instance
+
+# ---------------- INDEX CREATION ----------------
+def create_granular_indexes():
+    es = get_es()
+    if not es: return
+
+    dashboard_mapping = {
+        "mappings": {
+            "properties": {
+                "file_id": {"type": "keyword"},
+                "file_name": {"type": "keyword"},
+                "analysis_timestamp": {"type": "date"},
+                "start_time_utc": {"type": "date"},
+                "end_time_utc": {"type": "date"},
+                "duration_seconds": {"type": "double"},
+                "attack_duration_seconds": {"type": "double"},
+                "total_packets": {"type": "long"},
+                "total_connections": {"type": "long"},
+                "exact_pcap_packets": {"type": "long"},
+                "total_dns_queries": {"type": "long"},
+                "total_http_requests": {"type": "long"},
+                "total_bytes": {"type": "long"},
+                "malware_type": {"type": "keyword"},
+                "infected_host": {"type": "keyword"},
+                "reputation_status": {"type": "keyword"},
+                "unique_sources": {"type": "long"},
+                "transport_breakdown": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "application_breakdown": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "direction_breakdown": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "dns_breakdown": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "dns_domains": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "url_domains": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "ssl_servers": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "destinations": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "top_dns_domains": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "top_url_domains": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "top_ssl_servers": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "top_destinations": {
+                    "properties": {
+                        "label": {"type": "keyword"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "time_series": {
+                    "properties": {
+                        "label": {"type": "date"},
+                        "value": {"type": "long"}
+                    }
+                },
+                "recent_connections": {
+                    "properties": {
+                        "ts": {"type": "date"},
+                        "uid": {"type": "keyword"},
+                        "id": {
+                            "properties": {
+                                "orig_h": {"type": "ip"},
+                                "orig_p": {"type": "integer"},
+                                "resp_h": {"type": "ip"},
+                                "resp_p": {"type": "integer"}
+                            }
+                        },
+                        "proto": {"type": "keyword"},
+                        "service": {"type": "keyword"},
+                        "duration": {"type": "double"},
+                        "orig_bytes": {"type": "long"},
+                        "resp_bytes": {"type": "long"},
+                        "orig_pkts": {"type": "long"},
+                        "resp_pkts": {"type": "long"},
+                        "orig_ip_bytes": {"type": "long"},
+                        "resp_ip_bytes": {"type": "long"},
+                        "conn_state": {"type": "keyword"},
+                        "history": {"type": "keyword"},
+                        "local_orig": {"type": "keyword"},
+                        "local_resp": {"type": "keyword"},
+                        "missed_bytes": {"type": "long"},
+                        "ip_proto": {"type": "integer"}
+                    }
+                },
+                "external_ips": {
+                    "properties": {
+                        "ip": {"type": "ip"},
+                        "packet_count": {"type": "long"},
+                        "country": {"type": "keyword"},
+                        "city": {"type": "keyword"},
+                        "latitude": {"type": "double"},
+                        "longitude": {"type": "double"},
+                        "isp": {"type": "keyword"},
+                        "internal_ips": {
+                            "properties": {
+                                "ip": {"type": "ip"},
+                                "packet_count": {"type": "long"}
+                            }
+                        }
+                    }
+                },
+                "internal_ips": {
+                    "properties": {
+                        "ip": {"type": "ip"},
+                        "packet_count": {"type": "long"},
+                        "remarks": {"type": "keyword"}
+                    }
+                },
+                "dns_queries": {
+                    "properties": {
+                        "domain": {"type": "keyword"},
+                        "record_type": {"type": "keyword"},
+                        "timestamp": {"type": "date"}
+                    }
+                },
+                "ioc_ips": {
+                    "properties": {
+                        "ip": {"type": "ip"},
+                        "reason": {"type": "keyword"}
+                    }
+                },
+                "ioc_domains": {
+                    "properties": {
+                        "domain": {"type": "keyword"},
+                        "reason": {"type": "keyword"}
+                    }
+                },
+                "ioc_urls": {
+                    "properties": {
+                        "url": {"type": "keyword"},
+                        "method": {"type": "keyword"},
+                        "purpose": {"type": "keyword"}
+                    }
+                },
+                "protocols": {
+                    "properties": {
+                        "protocol": {"type": "keyword"},
+                        "packet_count": {"type": "long"}
+                    }
+                },
+                "ports": {
+                    "properties": {
+                        "port": {"type": "keyword"},
+                        "protocol": {"type": "keyword"},
+                        "usage": {"type": "long"}
+                    }
+                },
+                "user_agents": {
+                    "properties": {
+                        "user_agent": {"type": "keyword"}
+                    }
+                },
+                "file_payloads": {
+                    "properties": {
+                        "filename": {"type": "keyword"},
+                        "type": {"type": "keyword"},
+                        "protocol": {"type": "keyword"},
+                        "destination_ip": {"type": "ip"}
+                    }
+                },
+                "ftp_session": {
+                    "properties": {
+                        "source_ip": {"type": "ip"},
+                        "destination_ip": {"type": "ip"},
+                        "port": {"type": "keyword"},
+                        "server_banner": {"type": "text"},
+                        "username": {"type": "keyword"},
+                        "password": {"type": "keyword"},
+                        "command": {"type": "keyword"},
+                        "file_transferred": {"type": "keyword"},
+                        "data_channel": {"type": "keyword"},
+                        "data_type": {"type": "keyword"}
+                    }
+                },
+                "alerts": {
+                    "properties": {
+                        "type": {"type": "keyword"},
+                        "description": {"type": "text"},
+                        "severity": {"type": "keyword"},
+                        "source": {"type": "ip"},
+                        "target": {"type": "ip"}
+                    }
+                },
+                "raw_external_ips": {
+                    "properties": {
+                        "ip": {"type": "ip"},
+                        "packet_count": {"type": "long"},
+                        "country": {"type": "keyword"},
+                        "city": {"type": "keyword"},
+                        "latitude": {"type": "double"},
+                        "longitude": {"type": "double"},
+                        "isp": {"type": "keyword"}
+                    }
+                },
+                "summary": {
+                    "properties": {
+                        "unique_sources": {"type": "long"},
+                        "log_types": {"type": "keyword"},
+                        "file_size": {"type": "long"}
+                    }
+                }
+            },
+            "dynamic": True
+        }
+    }
+
+    # 1. CAPTURES SUMMARY
+    captures_mapping = {
+        "mappings": {
+            "properties": {
+                "pcap_id": {"type": "keyword"},
+                "pcap_filename": {"type": "keyword"},
+                "analysis_timestamp": {"type": "date"},
+                "traffic_start": {"type": "date"},
+                "traffic_end": {"type": "date"},
+                "total_packets": {"type": "long"},
+                "duration_seconds": {"type": "double"},
+                "total_bytes": {"type": "long"},
+                "file_size": {"type": "long"},
+                "unique_ips": {"type": "integer"},
+                "unique_domains": {"type": "integer"}
+            }
+        }
+    }
+
+    # 2. GRANULAR IPS
+    ips_mapping = {
+        "mappings": {
+            "properties": {
+                "pcap_id": {"type": "keyword"},
+                "ip": {"type": "ip"},
+                "packet_count": {"type": "integer"},
+                "country": {"type": "keyword"},
+                "city": {"type": "keyword"},
+                "isp": {"type": "keyword"},
+                "latitude": {"type": "double"},
+                "longitude": {"type": "double"},
+                "location": {"type": "geo_point"},
+                "is_internal": {"type": "boolean"},
+                "internal_connection_count": {"type": "integer"}
+            }
+        }
+    }
+
+    # 3. GRANULAR DNS/URLS
+    dns_mapping = {
+        "mappings": {
+            "properties": {
+                "pcap_id": {"type": "keyword"},
+                "domain": {"type": "keyword"},
+                "type": {"type": "keyword"}, # 'dns' or 'http'
+                "count": {"type": "integer"},
+                "is_ioc": {"type": "boolean"}
+            }
+        }
+    }
+
+    for idx, mapping in [
+        (PCAP_CAPTURES_INDEX, captures_mapping),
+        (PCAP_IPS_INDEX, ips_mapping),
+        (PCAP_DNS_INDEX, dns_mapping),
+        (PCAP_DASHBOARD_INDEX, dashboard_mapping),
+    ]:
+        if not es.indices.exists(index=idx):
+            es.indices.create(index=idx, body=mapping)
+            print(f"✓ Created Index: {idx}")
+
+def create_pcap_index():
+    # Keep original for compatibility but prioritize granular
+    create_granular_indexes()
+    es = get_es()
+    if not es: return
+    if not es.indices.exists(index=PCAP_INDEX):
+        mapping = {
+            "mappings": {
+                "properties": {
+                    "pcap_id": {"type": "keyword"},
+                    "pcap_filename": {"type": "keyword"},
+                    "external_ips": {"type": "nested"} # Keep simplified version
+                }
+            }
+        }
+        es.indices.create(index=PCAP_INDEX, body=mapping)
+
+# ---------------- INDEXING ----------------
+
+def bulk_index_granular_data(pcap_id, pcap_filename, summary_data, ips_data, dns_data):
+    es = get_es()
+    if not es: return
+
+    actions = []
+
+    # 1. Summary Record
+    summary_data['pcap_id'] = pcap_id
+    summary_data['pcap_filename'] = pcap_filename
+    summary_data['analysis_timestamp'] = datetime.now(timezone.utc).isoformat()
+    actions.append({
+        "_index": PCAP_CAPTURES_INDEX,
+        "_id": pcap_id,
+        "_source": summary_data
+    })
+
+    # 2. IP Records
+    for ip_record in ips_data:
+        ip_record['pcap_id'] = pcap_id
+        # Ensure location
+        lat = ip_record.get('latitude')
+        lon = ip_record.get('longitude')
+        if lat is not None and lon is not None:
+            ip_record['location'] = {"lat": lat, "lon": lon}
+            
+        actions.append({
+            "_index": PCAP_IPS_INDEX,
+            "_source": ip_record
+        })
+
+    # 3. DNS/URL Records
+    for dns_record in dns_data:
+        dns_record['pcap_id'] = pcap_id
+        actions.append({
+            "_index": PCAP_DNS_INDEX,
+            "_source": dns_record
+        })
+
+    try:
+        # Use raise_on_error=False so that we index what we can even if some records fail
+        success, errors = bulk(es, actions, raise_on_error=False)
+        if errors:
+            print(f"  ⚠ {len(errors)} records failed to index for {pcap_id}")
+            # Debug first error
+            print(f"  Sample Error: {errors[0]['index']['error']}")
+        return success
+    except Exception as e:
+        print(f"✗ Bulk indexing error: {e}")
+        return 0
+
+
+def index_dashboard_document(pcap_id, dashboard_data):
+    es = get_es()
+    if not es:
+        return None
+
+    payload = dict(dashboard_data)
+    payload["file_id"] = pcap_id
+    payload["pcap_id"] = pcap_id
+    payload["analysis_timestamp"] = datetime.now(timezone.utc).isoformat()
+
+    try:
+        return es.index(index=PCAP_DASHBOARD_INDEX, id=pcap_id, document=payload)
+    except TypeError:
+        return es.index(index=PCAP_DASHBOARD_INDEX, id=pcap_id, body=payload)
+    except Exception as e:
+        print(f"✗ Dashboard index error for {pcap_id}: {e}")
+        return None
+
+
+def get_dashboard_document(pcap_id):
+    es = get_es()
+    if not es:
+        return None
+
+    try:
+        doc = es.get(index=PCAP_DASHBOARD_INDEX, id=pcap_id)["_source"]
+        if doc.get("file_id") == pcap_id or doc.get("pcap_id") == pcap_id:
+            return doc
+    except NotFoundError:
+        pass
+    except Exception:
+        pass
+
+    try:
+        res = es.search(
+            index=PCAP_DASHBOARD_INDEX,
+            body={"query": {"term": {"file_id": pcap_id}}},
+            size=1,
+        )
+        hits = res.get("hits", {}).get("hits", [])
+        if hits:
+            doc = hits[0].get("_source", {})
+            if doc.get("file_id") == pcap_id or doc.get("pcap_id") == pcap_id:
+                return doc
+    except Exception:
+        pass
+
+    return None
+
+
+def get_latest_dashboard_document():
+    es = get_es()
+    if not es:
+        return None
+
+    try:
+        res = es.search(
+            index=PCAP_DASHBOARD_INDEX,
+            body={"query": {"match_all": {}}},
+            size=1,
+            sort=[{"analysis_timestamp": {"order": "desc"}}]
+        )
+        hits = res.get("hits", {}).get("hits", [])
+        if hits:
+            return hits[0].get("_source")
+        return None
+    except Exception:
+        return None
+
+# (Legacy support for index_pcap_analysis)
+def index_pcap_analysis(pcap_id, pcap_filename, external_ips, **kwargs):
+    # This now just routes to granular if needed, but we should call 
+    # bulk_index_granular_data directly from zeek_analysis
+    pass
+
+# ---------------- SEARCH & AGGREGATIONS ----------------
+
+def get_pcap_stats_from_es(pcap_id):
+    es = get_es()
+    if not es: return None
+    
+    summary = get_pcap_summary(pcap_id)
+    if not summary:
+        return None
+
+    # Initialize variables that will be used later
+    flow = []
+    geo = {'countries': []}
+
+    # Aggr 1: Transport & Application (from zeek-conn)
+    app_stats = []
+    trans_stats = []
+    dir_stats = []
+    try:
+        aggs = {
+            "apps": {"terms": {"field": "service.keyword", "size": 10}},
+            "trans": {"terms": {"field": "proto.keyword", "size": 10}},
+            "dirs": {"terms": {"field": "direction.keyword", "size": 5}}
+        }
+        res = es.search(index="zeek-conn", body={
+            "query": {"term": {"pcap_id": pcap_id}},
+            "aggs": aggs, "size": 0
+        })
+        buckets = res.get("aggregations", {})
+        app_stats = [{"label": b["key"] or "unknown", "value": b["doc_count"]} for b in buckets.get("apps", {}).get("buckets", [])]
+        trans_stats = [{"label": b["key"], "value": b["doc_count"]} for b in buckets.get("trans", {}).get("buckets", [])]
+        dir_stats = [{"label": b["key"], "value": b["doc_count"]} for b in buckets.get("dirs", {}).get("buckets", [])]
+    except Exception: pass
+
+    # Aggr 2: DNS Domains (from zeek-dns)
+    dns_stats = []
+    try:
+        res = es.search(index="zeek-dns", body={
+            "query": {"term": {"pcap_id": pcap_id}},
+            "aggs": {"domains": {"terms": {"field": "query.keyword", "size": 10}}}, "size": 0
+        })
+        dns_stats = [{"label": b["key"], "value": b["doc_count"]} for b in res.get("aggregations", {}).get("domains", {}).get("buckets", [])]
+    except Exception: pass
+
+    # Aggr 3: External IPs (Top 100 detailed records)
+    ext_ips = []
+    try:
+        res = es.search(index="pcap-ips", body={
+            "query": {"term": {"pcap_id": pcap_id}},
+            "size": 100, "sort": [{"packet_count": "desc"}]
+        })
+        ext_ips = [h["_source"] for h in res["hits"]["hits"]]
+    except Exception: pass
+
+    # Aggr 4: DNS Queries (Top 100 records)
+    dns_records = []
+    try:
+        res = es.search(index="zeek-dns", body={
+            "query": {"term": {"pcap_id": pcap_id}},
+            "size": 100, "sort": [{"@timestamp": "desc"}]
+        })
+        for h in res["hits"]["hits"]:
+            s = h["_source"]
+            dns_records.append({
+                "domain": s.get("query"),
+                "record_type": s.get("qtype_name"),
+                "timestamp": s.get("@timestamp")
+            })
+    except Exception: pass
+
+    # Aggr 5: Protocols & Ports (from zeek-conn)
+    protocols = []
+    ports = []
+    try:
+        # We reuse the trans_stats and app_stats from above mixed with some logic
+        protocols = [{"protocol": s["label"], "packet_count": s["value"]} for s in trans_stats]
+        # For ports, we need another aggregation
+        res = es.search(index="zeek-conn", body={
+            "query": {"term": {"pcap_id": pcap_id}},
+            "aggs": {
+                "p": {"terms": {"field": "id.resp_p", "size": 20}, 
+                      "aggs": {"pr": {"terms": {"field": "proto.keyword", "size": 1}}}}
+            }, "size": 0
+        })
+        for b in res.get("aggregations", {}).get("p", {}).get("buckets", []):
+            proto_name = b.get("pr", {}).get("buckets", [{}])[0].get("key", "unk")
+            ports.append({"port": b["key"], "protocol": proto_name, "usage": b["doc_count"]})
+    except Exception: pass
+
+    stats = {
+        'file_id': pcap_id,
+        'file_name': summary.get('pcap_filename'),
+        'total_packets': summary.get('total_packets', 0),
+        'total_bytes': summary.get('total_bytes', 0),
+        'duration_seconds': summary.get('duration_seconds', 0),
+        'file_size': summary.get('file_size', 0),
+        'total_connections': sum(s['value'] for s in trans_stats),
+        'exact_pcap_packets': summary.get('total_packets'),
+        'transport_breakdown': trans_stats,
+        'application_breakdown': app_stats,
+        'direction_breakdown': dir_stats,
+        'top_dns_domains': dns_stats,
+        'top_destinations': geo.get('countries', [])[:10],
+        'external_ips': ext_ips,
+        'internal_ips': [],
+        'dns_queries': dns_records,
+        'protocols': protocols,
+        'ports': ports,
+        'summary': summary
+    }
+    return stats
+
+
+def get_all_pcap_summaries():
+    es = get_es()
+    if not es: return []
+    try:
+        res = es.search(
+            index=PCAP_CAPTURES_INDEX,
+            body={"query": {"match_all": {}}},
+            size=1000,
+            sort=[{"analysis_timestamp": {"order": "desc"}}]
+        )
+        return [hit["_source"] for hit in res["hits"]["hits"]]
+    except Exception:
+        return []
+
+def get_pcap_summary(pcap_id):
+    es = get_es()
+    if not es: return None
+    try:
+        return es.get(index=PCAP_CAPTURES_INDEX, id=pcap_id)["_source"]
+    except NotFoundError:
+        return None
+
+
+def get_repository_stats():
+    es = get_es()
+    if not es:
+        return {
+            "total_pcaps": 0,
+            "observed_ips": 0,
+            "repository_size": 0,
+            "traffic_volume": 0,
+        }
+
+    try:
+        total_pcaps = int(es.count(index=PCAP_CAPTURES_INDEX, body={"query": {"match_all": {}}}).get("count", 0))
+    except Exception:
+        total_pcaps = 0
+
+    try:
+        capture_agg = es.search(
+            index=PCAP_CAPTURES_INDEX,
+            body={
+                "query": {"match_all": {}},
+                "size": 0,
+                "aggs": {
+                    "repository_size": {"sum": {"field": "file_size"}},
+                    "traffic_volume": {"sum": {"field": "total_packets"}},
+                },
+            },
+        )
+        aggs = capture_agg.get("aggregations", {})
+        repository_size = int(aggs.get("repository_size", {}).get("value", 0) or 0)
+        traffic_volume = int(aggs.get("traffic_volume", {}).get("value", 0) or 0)
+    except Exception:
+        repository_size = 0
+        traffic_volume = 0
+
+    try:
+        ips_agg = es.search(
+            index=PCAP_IPS_INDEX,
+            body={
+                "query": {"match_all": {}},
+                "size": 0,
+                "aggs": {
+                    "observed_ips": {
+                        "cardinality": {
+                            "field": "ip",
+                            "precision_threshold": 4000,
+                        }
+                    }
+                },
+            },
+        )
+        observed_ips = int(
+            ips_agg.get("aggregations", {})
+            .get("observed_ips", {})
+            .get("value", 0)
+            or 0
+        )
+    except Exception:
+        observed_ips = 0
+
+    return {
+        "total_pcaps": total_pcaps,
+        "observed_ips": observed_ips,
+        "repository_size": repository_size,
+        "traffic_volume": traffic_volume,
+    }
+
+def get_ip_breakdown(pcap_id=None):
+    es = get_es()
+    if not es: return {"isps": [], "countries": [], "cities": []}
+
+    query = {"match_all": {}}
+    if pcap_id: query = {"term": {"pcap_id": pcap_id}}
+
+    def make_agg(field):
+        return {
+            "terms": {"field": field, "size": 1000},
+            "aggs": {"packets": {"sum": {"field": "packet_count"}}}
+        }
+
+    aggs = {
+        "isps": make_agg("isp"),
+        "countries": make_agg("country"),
+        "cities": make_agg("city")
+    }
+
+    try:
+        res = es.search(index=PCAP_IPS_INDEX, body={"query": query, "aggs": aggs, "size": 0})
+        aggregations = res.get("aggregations", {})
+        
+        def extract(name):
+            buckets = aggregations.get(name, {}).get("buckets", [])
+            return [{"name": b["key"], "count": b["doc_count"], "packets": int(b.get("packets", {}).get("value", 0))} for b in buckets]
+
+        return {"isps": extract("isps"), "countries": extract("countries"), "cities": extract("cities")}
+    except Exception:
+        return {"isps": [], "countries": [], "cities": []}
+
+def get_dns_breakdown(pcap_id=None):
+    es = get_es()
+    if not es: return []
+
+    query = {"match_all": {}}
+    if pcap_id: query = {"term": {"pcap_id": pcap_id}}
+
+    aggs = {
+        "domains": {
+            "terms": {"field": "domain", "size": 100},
+            "aggs": {"count": {"sum": {"field": "count"}}}
+        }
+    }
+
+    try:
+        res = es.search(index=PCAP_DNS_INDEX, body={"query": query, "aggs": aggs, "size": 0})
+        buckets = res.get("aggregations", {}).get("domains", {}).get("buckets", [])
+        return [{b["key"]: int(b.get("count", {}).get("value", 0))} for b in buckets]
+    except Exception:
+        return []
+
+# Scan Index helpers
+def index_ip_scan(scan_data):
+    es = get_es()
+    if not es: return None
+    ip = scan_data.get("ip")
+    geo = scan_data.get("geo", {})
+    if geo.get("lat") and geo.get("lon"):
+        geo["location"] = {"lat": geo["lat"], "lon": geo["lon"]}
+    scan_data["geo"] = geo
+    try:
+        return es.index(index=SCAN_INDEX, id=ip, body=scan_data)
+    except Exception:
+        return None
+
+def get_ip_scan(ip):
+    es = get_es()
+    if not es: return None
+    try:
+        return es.get(index=SCAN_INDEX, id=ip)["_source"]
+    except NotFoundError:
+        try:
+            return es.get(index=SCAN_INDEX_LEGACY, id=ip)["_source"]
+        except NotFoundError:
+            return None
+
+
+# ---------------- LEGACY COMPAT ----------------
+
+def get_pcap_analysis(pcap_id):
+    """Fetch a single PCAP summary from the captures index."""
+    return get_pcap_summary(pcap_id)
+
+
+def get_all_pcap_analyses():
+    """Return all PCAP summaries sorted by timestamp."""
+    return get_all_pcap_summaries()
+
+
+def get_recent_logs_from_es(log_type, timeline=None, page=1, per_page=50, pcap_id=None):
+    es = get_es()
+    if not es:
+        return {"logs": [], "total": 0, "page": page, "per_page": per_page, "total_pages": 0}
+
+    index_name = f"zeek-{log_type}"
+    query = {"bool": {"must": []}}
+    if pcap_id:
+        query["bool"]["must"].append({"term": {"pcap_id": pcap_id}})
+
+    try:
+        start = (page - 1) * per_page
+        res = es.search(
+            index=index_name,
+            body={"query": query, "from": start, "size": per_page,
+                  "sort": [{"@timestamp": {"order": "desc"}}]}
+        )
+        hits = res["hits"]["hits"]
+        total = res["hits"]["total"]["value"]
+        total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+        return {"logs": [h["_source"] for h in hits], "total": total,
+                "page": page, "per_page": per_page, "total_pages": total_pages}
+    except Exception as e:
+        raise e
+
+
+def get_geo_aggregation(pcap_id=None):
+    """Aggregate ISP/Country/City from the granular pcap-ips index."""
+    return get_ip_breakdown(pcap_id)

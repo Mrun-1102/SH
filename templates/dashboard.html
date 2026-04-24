@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Network Traffic Overview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #f6f3ed;
+      --surface: #fffdf8;
+      --surface-2: #f2ede4;
+      --border: #ded7cb;
+      --text: #1e2630;
+      --muted: #6d7684;
+      --head: #101723;
+      --accent: #0e7aa8;
+      --accent-2: #167a61;
+      --warn: #b66a22;
+      --red: #c34d4d;
+      --shadow: 0 18px 40px rgba(17, 24, 39, .06);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'IBM Plex Sans', sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(14, 122, 168, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(22, 122, 97, 0.08), transparent 22%),
+        linear-gradient(180deg, #fbfaf6 0%, var(--bg) 100%);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .26;
+      background-image:
+        linear-gradient(rgba(255,255,255,.55) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.5) 1px, transparent 1px);
+      background-size: 24px 24px;
+      mask-image: linear-gradient(180deg, rgba(0,0,0,.55), transparent 85%);
+    }
+
+    .shell { max-width: 1500px; margin: 0 auto; padding: 18px 22px 28px; }
+    .navbar-shell, .panel {
+      background: rgba(255, 253, 248, .9);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .navbar-shell {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px;
+      backdrop-filter: blur(14px); position: sticky; top: 12px; z-index: 100;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand-mark {
+      width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center;
+      color: white; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 10px 24px rgba(14, 122, 168, .25); flex-shrink: 0;
+    }
+    .brand-copy h1 { margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--head); }
+    .brand-copy p { margin: 2px 0 0; font-size: .82rem; color: var(--muted); }
+    .nav-links { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .nav-links a {
+      text-decoration: none; color: var(--text); border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
+      padding: 8px 14px; font-family: 'IBM Plex Mono', monospace; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    .nav-links a:hover, .nav-links a.active { transform: translateY(-1px); box-shadow: var(--shadow); background: rgba(14, 122, 168, .08); color: var(--accent); border-color: rgba(14, 122, 168, .22); }
+
+    .status-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0 0; padding: 14px 16px;
+      background: rgba(255, 253, 248, .88); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow);
+    }
+    .status-label { font-size: .7rem; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-bottom: 4px; }
+    .status-copy { font-size: .96rem; font-weight: 600; color: var(--head); line-height: 1.4; }
+    .status-pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; font-size: .84rem; font-weight: 700; border: 1px solid transparent; }
+    .status-pill.connected { background: rgba(22, 122, 97, .12); color: #167a61; border-color: rgba(22, 122, 97, .18); }
+    .status-pill.disconnected { background: rgba(195, 77, 77, .12); color: #c34d4d; border-color: rgba(195, 77, 77, .18); }
+
+    .grid { display: grid; gap: 16px; margin-top: 18px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .summary-card {
+      background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(242,237,228,.72)); border: 1px solid var(--border); border-radius: 16px; padding: 14px 16px; overflow: hidden; position: relative;
+    }
+    .summary-card::before { content: ''; position: absolute; inset: 0 auto auto 0; width: 100%; height: 3px; background: var(--accent); }
+    .summary-card .title { font-size: .66rem; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin-bottom: 8px; font-weight: 700; }
+    .summary-card .value { font-family: 'IBM Plex Mono', monospace; font-size: 1.03rem; font-weight: 600; color: var(--head); line-height: 1.35; word-break: break-word; }
+    .summary-card .sub { font-size: .72rem; color: var(--muted); margin-top: 5px; }
+
+    .panel-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px;
+      border-bottom: 1px solid var(--border); background: linear-gradient(180deg, rgba(242, 237, 228, .65), rgba(255,255,255,0));
+    }
+    .panel-head h2 { margin: 0; font-size: .86rem; font-weight: 700; color: var(--head); letter-spacing: .04em; text-transform: uppercase; }
+    .panel-body { padding: 16px 18px 18px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .chart-box { position: relative; height: 260px; }
+    .chart-box.large { height: 300px; }
+    .chart-box.small { height: 220px; }
+    .doughnut-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .chart-card { background: rgba(255,255,255,.58); border: 1px solid var(--border); border-radius: 16px; padding: 14px; }
+    .chart-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .chart-title h3 { margin: 0; font-size: .8rem; font-weight: 700; color: var(--head); }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 10px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: .74rem; color: var(--text); }
+    .legend-color { width: 11px; height: 11px; border-radius: 4px; flex-shrink: 0; }
+
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    thead tr { background: var(--surface-2); }
+    th {
+      text-align: left; padding: 10px 12px; font-family: 'IBM Plex Mono', monospace; font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); white-space: nowrap;
+    }
+    td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; font-family: 'IBM Plex Mono', monospace; font-size: .77rem; color: var(--text); }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover td { background: rgba(14, 122, 168, .03); }
+    .ip { color: var(--accent); }
+    .dim { color: var(--muted); }
+    .ip { cursor: pointer; color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(14, 122, 168, .2); transition: all 0.2s; }
+    .ip:hover { color: var(--accent-2); text-decoration-color: var(--accent-2); }
+    
+    .scan-card { background: #fff; border-radius: 12px; padding: 15px; margin-bottom: 12px; border: 1px solid var(--border); }
+    .scan-label { font-size: 0.65rem; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-bottom: 2px; }
+    .scan-value { font-family: 'IBM Plex Mono', monospace; font-size: 0.9rem; font-weight: 600; color: var(--head); }
+    .badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .badge-soft {
+      display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 4px 8px; border-radius: 999px;
+      font-family: 'IBM Plex Mono', monospace; font-size: .65rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+      background: rgba(14, 122, 168, .08); color: var(--accent); border: 1px solid rgba(14, 122, 168, .15);
+    }
+    .btn-soft {
+      border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 10px; padding: 8px 12px;
+      font-family: 'IBM Plex Mono', monospace; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+      text-decoration: none; transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    .btn-soft:hover { transform: translateY(-1px); box-shadow: var(--shadow); background: #fff; color: var(--text); }
+    .section-label {
+      display: flex; align-items: center; gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: .66rem; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin: 6px 0 2px;
+    }
+    .section-label::after { content: ''; height: 1px; flex: 1; background: var(--border); }
+    .recent-pagination { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+    .recent-pagination .page-info { color: var(--muted); font-size: .84rem; }
+    .pager-btn {
+      border: 1px solid rgba(14, 122, 168, .25);
+      background: linear-gradient(135deg, rgba(14, 122, 168, .14), rgba(22, 122, 97, .12));
+      color: var(--accent);
+      border-radius: 12px;
+      padding: 8px 14px;
+      min-width: 84px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease, color .18s ease;
+    }
+    .pager-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 22px rgba(14, 122, 168, .16);
+      background: linear-gradient(135deg, rgba(14, 122, 168, .18), rgba(22, 122, 97, .15));
+      color: #0a5e80;
+    }
+    .pager-btn:focus-visible {
+      outline: 2px solid rgba(14, 122, 168, .45);
+      outline-offset: 2px;
+    }
+    .pager-btn:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+      background: rgba(136, 146, 165, .18);
+      border-color: rgba(136, 146, 165, .24);
+      color: #8a93a2;
+    }
+
+    @media (max-width: 1180px) {
+      .summary-grid, .two-col { grid-template-columns: 1fr 1fr; }
+      .doughnut-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 760px) {
+      .shell { padding: 12px; }
+      .navbar-shell { position: static; }
+      .summary-grid, .two-col { grid-template-columns: 1fr; }
+      .doughnut-grid { grid-template-columns: 1fr; }
+      .status-bar { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="navbar-shell">
+      <div class="brand">
+        <div class="brand-mark"><i class="bi bi-shield-lock-fill"></i></div>
+        <div class="brand-copy">
+          <h1>Network Traffic Analysis</h1>
+          <p>Overview page for capture-level trends</p>
+        </div>
+      </div>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a class="active" href="/dashboard{% if selected_pcap_id %}?pcap_id={{ selected_pcap_id|urlencode }}{% endif %}">Overview</a>
+        <a href="/details{% if selected_pcap_id %}?pcap_id={{ selected_pcap_id|urlencode }}{% endif %}">Details</a>
+        <a href="/report{% if selected_pcap_id %}?pcap_id={{ selected_pcap_id|urlencode }}{% endif %}">Report</a>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div>
+        <div class="status-label">Elasticsearch Status</div>
+        <div class="status-copy">{{ elastic_message }}</div>
+      </div>
+      <div class="status-pill {% if elastic_connected %}connected{% else %}disconnected{% endif %}">
+        {% if elastic_connected %}
+        <i class="bi bi-check-circle-fill"></i>
+        <span>Connected</span>
+        {% else %}
+        <i class="bi bi-x-circle-fill"></i>
+        <span>Not Connected</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Capture Summary</h2>
+        </div>
+        <div class="panel-body">
+          <div id="summaryCards" class="summary-grid"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Network Traffic Distribution</h2></div>
+        <div class="panel-body">
+          <div class="doughnut-grid">
+            <div class="chart-card">
+              <div class="chart-title"><h3>Transport</h3></div>
+              <div class="chart-box small" style="height: 180px;"><canvas id="transportChart"></canvas></div>
+              <div class="legend" id="transportLegend"></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title"><h3>Application</h3></div>
+              <div class="chart-box small"><canvas id="applicationChart"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title"><h3>Direction</h3></div>
+              <div class="chart-box small" style="height: 180px;"><canvas id="directionChart"></canvas></div>
+              <div class="legend" id="directionLegend"></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title"><h3>DNS Domains (Top 10)</h3></div>
+              <div class="chart-box small"><canvas id="dnsChart"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title"><h3>URL Domains (Top 10)</h3></div>
+              <div class="chart-box small"><canvas id="urlChart"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Session Timeline</h2></div>
+        <div class="panel-body">
+          <div class="chart-card">
+            <div class="chart-box large"><canvas id="timeSeriesChart"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <h2>Recent Connections</h2>
+            <select id="timelineFilter" class="btn-soft" style="padding: 4px 8px; font-size: 0.7rem; cursor: pointer; border-radius: 8px; background: transparent; backdrop-filter: blur(14px);">
+              <option value="default">All Time</option>
+              <option value="5m">Last 5 Mins</option>
+              <option value="15d">Last 15 Days</option>
+              <option value="45d">Last 45 Days</option>
+              <option value="90d">Last 90 Days</option>
+              <option value="6M">Last 6 Months</option>
+            </select>
+          </div>
+          <span class="badge-soft" id="recentCountLabel">0 rows</span>
+        </div>
+        <div class="panel-body table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th><th>Source IP</th><th>Dest IP</th><th>Dest Port</th><th>Protocol</th><th>Service</th><th>Duration</th><th>Bytes</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="recentConnections"></tbody>
+          </table>
+          <div class="recent-pagination d-none" id="recentPagination">
+            <div class="page-info" id="recentPageInfo">Page 1 of 1</div>
+            <div class="badges">
+              <button class="btn-soft pager-btn" id="recentPrevBtn" type="button">Prev</button>
+              <button class="btn-soft pager-btn" id="recentNextBtn" type="button">Next</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IP Intelligence Modal -->
+  <div class="modal fade" id="scanModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content" style="background: rgba(255, 253, 248, .98); border-radius: 20px; border: 1px solid var(--border); box-shadow: var(--shadow);">
+        <div class="modal-header border-bottom-0 pb-0">
+          <h5 class="modal-title" style="font-weight:700; color:var(--head);">
+            IP Intelligence Report - <span id="scanModalIp"></span>
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body pt-3">
+          <div id="scanLoading" class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <div class="mt-3 font-monospace" style="font-size:0.8rem; letter-spacing:0.05em;">SCANNING IN PROGRESS...</div>
+          </div>
+          
+          <div id="scanResult" class="d-none">
+            <!-- Network Information -->
+            <div class="row g-3 mb-4">
+              <div class="col-md-4">
+                <div class="scan-card h-100">
+                  <div class="scan-label">Operating System</div>
+                  <div class="scan-value" id="scanOs">—</div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="scan-card h-100">
+                  <div class="scan-label">Vendor / Manufacturer</div>
+                  <div class="scan-value" id="scanVendor">—</div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="scan-card h-100">
+                  <div class="scan-label">Scan Timestamp</div>
+                  <div class="scan-value" id="scanTime" style="font-size:0.75rem;">—</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Geographic Information -->
+            <div class="row g-3 mb-4">
+              <div class="col-md-4">
+                <div class="scan-card h-100">
+                  <div class="scan-label">Country</div>
+                  <div class="scan-value" id="scanCountry">—</div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="scan-card h-100">
+                  <div class="scan-label">City</div>
+                  <div class="scan-value" id="scanCity">—</div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="scan-card h-100">
+                  <div class="scan-label">Internet Service Provider</div>
+                  <div class="scan-value" id="scanISP">—</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Organization Information -->
+            <div class="row g-3 mb-4">
+              <div class="col-md-4">
+                <div class="scan-card h-100">
+                  <div class="scan-label">Organization</div>
+                  <div class="scan-value" id="scanOrg">—</div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="scan-card h-100">
+                  <div class="scan-label">Contact Email</div>
+                  <div class="scan-value" id="scanEmail" style="font-size:0.8rem; word-break: break-all;">—</div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="scan-card h-100">
+                  <div class="scan-label">Contact Phone</div>
+                  <div class="scan-value" id="scanPhone" style="font-size:0.8rem;">—</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Open Ports & Services -->
+            <div class="panel" style="border-radius:14px; background:rgba(242, 237, 228, 0.4); margin-bottom: 0;">
+              <div class="panel-head" style="background:none; border-bottom:1px solid var(--border);">
+                <h2>Open Ports and Services</h2>
+              </div>
+              <div class="panel-body p-0">
+                <table class="m-0">
+                  <thead>
+                    <tr>
+                      <th>Port</th>
+                      <th>Protocol</th>
+                      <th>Service</th>
+                      <th>Version</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="scanPortsBody">
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const urlParams = new URLSearchParams(window.location.search);
+    const activePcapId = urlParams.get('pcap_id') || '';
+    const VIVID_PALETTES = {
+      transport: ['#42a5f5', '#ffb300', '#8e24aa', '#ef5350', '#26a69a', '#66bb6a'],
+      application: ['#c77dff', '#f06292', '#ffd54f', '#ff7043', '#42a5f5', '#66bb6a', '#8d6e63', '#26a69a'],
+      direction: ['#5b8def', '#ff8f2b', '#8e8e8e', '#26c6da'],
+      dns: ['#7cb342', '#42a5f5', '#ab47bc', '#ef5350', '#ffa726', '#26c6da'],
+      url: ['#ff5e5b', '#ffb703', '#fb8500', '#8e44ad', '#2ec4b6', '#4361ee'],
+      ssl: ['#d65db1', '#4cc9f0', '#80c56c', '#9e9e9e', '#e53935', '#1dd1a1'],
+    };
+
+    function fmt(v) { return (v === null || v === undefined || v === '') ? '—' : (typeof v === 'number' ? v.toLocaleString() : String(v)); }
+    function fmtDuration(seconds) {
+      const totalSeconds = Math.max(0, Number(seconds) || 0);
+      if (!Number.isFinite(totalSeconds)) return '—';
+
+      const wholeSeconds = Math.floor(totalSeconds);
+      const hours = Math.floor(wholeSeconds / 3600);
+      const minutes = Math.floor((wholeSeconds % 3600) / 60);
+      const secs = wholeSeconds % 60;
+
+      const parts = [];
+      if (hours > 0) parts.push(`${hours}h`);
+      if (minutes > 0) parts.push(`${minutes}m`);
+      if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+      return parts.join(' ');
+    }
+    function deriveDurationSeconds(summary, stats) {
+      const directDuration = summary?.duration_seconds ?? stats?.duration_seconds ?? stats?.attack_duration_seconds;
+      if (directDuration != null && Number.isFinite(Number(directDuration))) {
+        return Number(directDuration);
+      }
+
+      const startRaw = summary?.start_time_utc || stats?.start_time_utc;
+      const endRaw = summary?.end_time_utc || stats?.end_time_utc;
+      if (!startRaw || !endRaw) return null;
+
+      const start = new Date(startRaw);
+      const end = new Date(endRaw);
+      const diffSeconds = Math.round((end.getTime() - start.getTime()) / 1000);
+      return Number.isFinite(diffSeconds) && diffSeconds >= 0 ? diffSeconds : null;
+    }
+    function fmtTime(v) {
+      if (!v) return '—';
+      try {
+        let date;
+        const numericValue = typeof v === 'number' ? v : (typeof v === 'string' ? Number(v) : NaN);
+        if (Number.isFinite(numericValue)) {
+          const millis = Math.abs(numericValue) > 9999999999 ? numericValue : numericValue * 1000;
+          date = new Date(millis);
+        } else {
+          date = new Date(v);
+        }
+        
+        if (isNaN(date.getTime())) return fmt(v);
+        const Y = date.getFullYear();
+        const M = String(date.getMonth() + 1).padStart(2, '0');
+        const D = String(date.getDate()).padStart(2, '0');
+        const h = String(date.getHours()).padStart(2, '0');
+        const m = String(date.getMinutes()).padStart(2, '0');
+        const s = String(date.getSeconds()).padStart(2, '0');
+        return `${Y}-${M}-${D} ${h}:${m}:${s}`;
+      } catch {
+        return fmt(v);
+      }
+    }
+    function row(...cols) { return '<tr>' + cols.map(([v, c]) => `<td class="${c || ''}">${fmt(v)}</td>`).join('') + '</tr>'; }
+    function empty(cols) { return `<tr><td colspan="${cols}" class="dim">No data</td></tr>`; }
+    async function api(url) {
+      const r = await fetch(url);
+      if (!r.ok && r.status !== 202) throw new Error(`Request failed: ${r.status}`);
+      return r.json();
+    }
+    function buildColors(count, palette) { const result = []; let seed = 0; while (result.length < count) { result.push((palette && palette[result.length]) || `hsl(${Math.round((seed * 137.508) % 360)}, 62%, 48%)`); seed += 1; } return result; }
+    function createLegend(chart, containerId) {
+      const container = $(containerId);
+      const colors = chart.data.datasets[0].backgroundColor || [];
+      container.innerHTML = chart.data.labels.map((label, index) => `<div class="legend-item"><span class="legend-color" style="background:${colors[index]}"></span><span>${label}</span></div>`).join('');
+    }
+
+    const barOptions = { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { return ' ' + context.formattedValue; } } } }, scales: { x: { beginAtZero: true, grid: { color: 'rgba(31, 39, 51, .05)' }, ticks: { font: { family: "'IBM Plex Mono', monospace", size: 10 } } }, y: { grid: { display: false }, ticks: { font: { family: "'IBM Plex Mono', monospace", size: 10 } } } } };
+
+    const transportChart = new Chart($('transportChart'), { type: 'pie', data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderWidth: 2, borderColor: '#fffdf8' }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } } });
+    const applicationChart = new Chart($('applicationChart'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.8 }] }, options: barOptions });
+    const directionChart = new Chart($('directionChart'), { type: 'pie', data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderWidth: 2, borderColor: '#fffdf8' }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } } });
+    const dnsChart = new Chart($('dnsChart'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.8 }] }, options: barOptions });
+    const urlChart = new Chart($('urlChart'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.8 }] }, options: barOptions });
+    const timeSeriesChart = new Chart($('timeSeriesChart'), { type: 'line', data: { labels: [], datasets: [{ label: 'Packets', data: [], borderColor: '#0e7aa8', backgroundColor: 'rgba(14, 122, 168, .12)', fill: true, tension: .35, pointRadius: 3, pointHoverRadius: 5, pointBorderWidth: 2, pointBackgroundColor: '#fffdf8', pointBorderColor: '#0e7aa8' }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { autoSkip: true, maxTicksLimit: 10, minRotation: 0, maxRotation: 0, maxAlignment: 'center' } }, y: { beginAtZero: true, grid: { color: 'rgba(31, 39, 51, .07)' } } } } });
+
+    function renderSummary(summary, stats) {
+      const durationSeconds = deriveDurationSeconds(summary, stats);
+      const cards = [
+        { title: 'File Name', value: summary.file_name || stats.file_name || '—' },
+        { title: 'PCAP Packets', value: fmt(summary.total_packets ?? stats.total_packets ?? 0) },
+        { title: 'Connections', value: fmt(summary.total_connections ?? stats.total_connections ?? 0) },
+        { title: 'Bytes', value: `${(((Number(summary.total_bytes) || Number(stats.total_bytes) || 0) / 1024)).toFixed(2)} KB` },
+        { title: 'Duration', value: durationSeconds != null ? fmtDuration(durationSeconds) : '—' },
+        { title: 'Start UTC', value: fmtTime(summary.start_time_utc || stats.start_time_utc) },
+        { title: 'End UTC', value: fmtTime(summary.end_time_utc || stats.end_time_utc) },
+        { title: 'Infected Host', value: summary.infected_host || stats.infected_host || '—' },
+      ];
+      $('summaryCards').innerHTML = cards.map((item) => `<div class="summary-card"><div class="title">${item.title}</div><div class="value">${fmt(item.value)}</div>${item.sub ? `<div class="sub">${fmt(item.sub)}</div>` : ''}</div>`).join('');
+    }
+
+    function renderRecentConnectionsPage(response) {
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const page = Number(response?.pagination?.page || 1);
+      const perPage = Number(response?.pagination?.per_page || 20);
+      const total = Number(response?.pagination?.total || rows.length);
+      const totalPages = Number(response?.pagination?.total_pages || 1);
+
+      $('recentCountLabel').textContent = `${total.toLocaleString()} rows`;
+      if (rows.length === 0) {
+        $('recentConnections').innerHTML = '<tr><td colspan="9" class="dim">No data available.</td></tr>';
+        $('recentPagination').classList.add('d-none');
+        return;
+      }
+
+      $('recentConnections').innerHTML = rows.map((log) => `
+        <tr>
+          <td>${fmtTime(log.ts || log['@timestamp'])}</td>
+          <td class="ip">${fmt(log['id.orig_h'] || log.orig_h || '-')}</td>
+          <td class="ip">${fmt(log['id.resp_h'] || log.resp_h || '-')}</td>
+          <td>${fmt(log['id.resp_p'] || log.resp_p || '-')}</td>
+          <td><span class="badge-soft">${fmt(log.proto || '-')}</span></td>
+          <td class="dim">${fmt(log.service || '-')}</td>
+          <td>${typeof log.duration === 'number' ? `${log.duration.toFixed(2)}s` : '-'}</td>
+          <td>${typeof log.orig_bytes === 'number' ? `${(log.orig_bytes / 1024).toFixed(2)} KB` : '-'}</td>
+          <td><span class="badge-soft">${fmt(log.conn_state || '-')}</span></td>
+        </tr>
+      `).join('');
+
+      const pager = $('recentPagination');
+      const pageInfo = $('recentPageInfo');
+      const prevBtn = $('recentPrevBtn');
+      const nextBtn = $('recentNextBtn');
+
+      pageInfo.textContent = `Page ${page} of ${totalPages} (${perPage} rows/page)`;
+      prevBtn.disabled = page <= 1;
+      nextBtn.disabled = page >= totalPages;
+      pager.classList.toggle('d-none', total <= perPage);
+    }
+
+    let recentConnectionsPage = 1;
+    const recentConnectionsPerPage = 20;
+
+    async function loadRecentConnections(page) {
+      const safePage = Math.max(Number(page) || 1, 1);
+      const timeline = $('timelineFilter') ? $('timelineFilter').value : 'default';
+      const pcapParam = activePcapId ? `&pcap_id=${activePcapId}` : '';
+      const response = await api(`/api/recent-logs/conn?page=${safePage}&per_page=${recentConnectionsPerPage}&timeline=${timeline}${pcapParam}`);
+      recentConnectionsPage = Number(response?.pagination?.page || safePage);
+      renderRecentConnectionsPage(response);
+    }
+
+    async function loadDashboardData() {
+      const query = activePcapId ? `?pcap_id=${activePcapId}` : '';
+      const resp = await api(`/api/stats${query}`);
+      const data = resp.data || {};
+      const summary = data.summary || {};
+      renderSummary(summary, data);
+
+      await loadRecentConnections(1);
+
+      const transport = data.transport_breakdown || [];
+      const application = data.application_breakdown || [];
+      const direction = data.direction_breakdown || [];
+      let dns = data.dns_domains || data.dns_breakdown || [];
+      let url = data.url_domains || [];
+      const ssl = data.ssl_servers || [];
+      transportChart.data.labels = transport.map((item) => item.label);
+      transportChart.data.datasets[0].data = transport.map((item) => item.value);
+      transportChart.data.datasets[0].backgroundColor = buildColors(transport.length, VIVID_PALETTES.transport);
+      transportChart.update();
+
+      applicationChart.data.labels = application.map((item) => item.label);
+      applicationChart.data.datasets[0].data = application.map((item) => item.value);
+      applicationChart.data.datasets[0].backgroundColor = buildColors(application.length, VIVID_PALETTES.application);
+      applicationChart.update();
+
+      directionChart.data.labels = direction.map((item) => item.label);
+      directionChart.data.datasets[0].data = direction.map((item) => item.value);
+      directionChart.data.datasets[0].backgroundColor = buildColors(direction.length, VIVID_PALETTES.direction);
+      directionChart.update();
+
+      dns = dns.slice(0, 10);
+      dnsChart.data.labels = dns.map((item) => item.label);
+      dnsChart.data.datasets[0].data = dns.map((item) => item.value);
+      dnsChart.data.datasets[0].backgroundColor = buildColors(dns.length, VIVID_PALETTES.dns);
+      dnsChart.update();
+
+      url = url.slice(0, 10);
+      urlChart.data.labels = url.map((item) => item.label);
+      urlChart.data.datasets[0].data = url.map((item) => item.value);
+      urlChart.data.datasets[0].backgroundColor = buildColors(url.length, VIVID_PALETTES.url);
+      urlChart.update();
+
+      timeSeriesChart.data.labels = (data.time_series || []).map((item) => item.label);
+      timeSeriesChart.data.datasets[0].data = (data.time_series || []).map((item) => item.value);
+      timeSeriesChart.update();
+
+      createLegend(transportChart, 'transportLegend');
+      createLegend(directionChart, 'directionLegend');
+    }
+
+    let scanPollTimer = null;
+
+    async function triggerScan(ip) {
+      if (!ip || ip === '-' || ip === '—') return;
+      
+      // Clear any existing poll timer when starting a new scan
+      if (scanPollTimer) clearTimeout(scanPollTimer);
+      
+      const modalElement = $('scanModal');
+      const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+      $('scanModalIp').textContent = ip;
+      $('scanLoading').classList.remove('d-none');
+      $('scanResult').classList.add('d-none');
+      
+      // Ensure the modal is visible
+      if (!modalElement.classList.contains('show')) {
+         modal.show();
+      }
+
+      try {
+        const res = await api(`/api/ip/scan/${ip}`);
+        
+        // Handle "In Progress" (Status 202)
+        if (!res.success && (res.error || '').toLowerCase().includes('gathered')) {
+           showScanPending(ip);
+           // Auto-poll every 5 seconds
+           scanPollTimer = setTimeout(() => triggerScan(ip), 5000);
+           return;
+        }
+
+        if (res.success) {
+          const data = res.data;
+          renderScanResult(data);
+          $('scanLoading').classList.add('d-none');
+          $('scanResult').classList.remove('d-none');
+        } else {
+          throw new Error(res.error);
+        }
+      } catch (err) {
+        console.error("Scan failed", err);
+        showScanError(String(err?.message || err || 'Unable to load intelligence'));
+      }
+    }
+
+    function showScanPending(ip) {
+        $('scanLoading').innerHTML = `
+            <div class="p-5 text-center">
+              <div class="spinner-grow text-primary mb-3" role="status" style="width: 3rem; height: 3rem;"></div>
+              <h4 style="font-weight:700; color:var(--head);">Deep Scan in Progress</h4>
+              <p class="dim mt-3" style="font-size:0.9rem; max-width:400px; margin:0 auto;">
+                Nmap is currently profiling services and vulnerabilities for <strong>${ip}</strong>.
+              </p>
+              <div class="mt-4 p-3" style="background:rgba(14, 122, 168, 0.05); border-radius:12px; border:1px dashed var(--border);">
+                <span class="font-monospace" style="font-size:0.75rem; letter-spacing:0.05em; color:var(--accent);">STATUS: AUTO-REFRESHING...</span>
+              </div>
+            </div>
+          `;
+    }
+
+    function showScanError(message) {
+        $('scanLoading').innerHTML = `
+            <div class="p-5 text-center">
+              <i class="bi bi-exclamation-triangle-fill text-danger" style="font-size:3rem;"></i>
+              <h4 class="mt-3" style="font-weight:700; color:var(--head);">Intelligence Error</h4>
+              <div class="text-danger p-3 mt-3" style="background:rgba(195, 77, 77, 0.05); border-radius:8px; font-family:monospace; font-size:0.85rem;">
+                ${message}
+              </div>
+            </div>
+          `;
+    }
+
+    function renderScanResult(data) {
+          // Network Information
+          $('scanOs').textContent = data.os || 'Unknown';
+          $('scanVendor').textContent = data.vendor || 'Unknown';
+          $('scanTime').textContent = new Date(data.scan_time).toLocaleString();
+          
+          // Geographic Information
+          const geo = data.geo || {};
+          $('scanCountry').textContent = geo.country || '—';
+          $('scanCity').textContent = geo.city || '—';
+          $('scanISP').textContent = geo.isp || '—';
+          
+          // Risk Score Indicator
+          const score = data.risk_score || 0;
+          let riskColor = '#167a61'; // Low
+          let riskText = 'LOW RISK';
+          if (score > 60) { riskColor = '#c34d4d'; riskText = 'CRITICAL RISK'; }
+          else if (score > 30) { riskColor = '#b66a22'; riskText = 'SUSPICIOUS'; }
+          
+          $('scanModalIp').innerHTML = `${data.ip} <span class="badge-soft" style="background:${riskColor}15; color:${riskColor}; border-color:${riskColor}40; margin-left:10px; font-size:0.7rem; vertical-align:middle;">${riskText} (${score}/100)</span>`;
+          
+          // Organization Information
+          const whois = data.whois || {};
+          $('scanOrg').textContent = whois.org || '—';
+          $('scanEmail').textContent = whois.technical_contact || whois.email || '—';
+          $('scanPhone').textContent = whois.registrar || whois.phone || '—';
+          
+          function escapeHtml(text) {
+              const div = document.createElement('div');
+              div.textContent = text || '';
+              return div.innerHTML;
+          }
+
+          // Open Ports & Enhanced Service Data
+          let portsHtml = (data.ports || []).map(p => {
+              let extra = '';
+              if (p.http && p.http.title) {
+                  extra += `<div class="mt-1" style="font-size:0.65rem;"><span class="badge-soft" style="background:rgba(22, 122, 97, 0.08); color:var(--accent-2); border-color:rgba(22, 122, 97, 0.2);">HTTP</span> <span class="dim">Title:</span> <span style="color:var(--head); font-weight:500;">${escapeHtml(p.http.title)}</span></div>`;
+              }
+              if (p.tls && p.tls.subject) {
+                   let subject = 'Yes';
+                   try { subject = p.tls.subject[0][0][1]; } catch(e) {}
+                   extra += `<div class="mt-1" style="font-size:0.65rem;"><span class="badge-soft" style="background:rgba(14, 122, 168, 0.08); color:var(--accent); border-color:rgba(14, 122, 168, 0.2);">TLS</span> <span class="dim">Cert:</span> <span style="color:var(--head); font-weight:500;">${escapeHtml(subject)}</span></div>`;
+              }
+              
+              if (p.cves && p.cves.length > 0) {
+                  extra += `<div class="mt-1 d-flex flex-wrap gap-1" style="margin-top: 6px !important;">`;
+                  p.cves.slice(0, 3).forEach(cve => {
+                      const severityClass = (cve.severity || '').toLowerCase() === 'critical' ? 'badge-red' : 'badge-warn';
+                      extra += `<span class="badge-soft ${severityClass}" style="font-size:0.62rem; padding:1px 6px; border-radius:4px;">${cve.id}</span>`;
+                  });
+                  if (p.cves.length > 3) extra += `<span class="dim" style="font-size:0.62rem; font-weight:600; padding-top:2px;">+${p.cves.length - 3} MORE</span>`;
+                  extra += `</div>`;
+              }
+
+              return `
+                <tr>
+                  <td style="vertical-align: middle;"><span class="badge-soft" style="font-size:0.75rem; border-radius:6px; padding:3px 8px; background:rgba(14, 122, 168, 0.1); border:1px solid rgba(14, 122, 168, 0.2); font-weight:700;">${p.port}</span></td>
+                  <td style="vertical-align: middle; font-weight:500; font-family:'IBM Plex Mono'; opacity:0.8;">${p.protocol.toUpperCase()}</td>
+                  <td><div style="font-weight:700; color:var(--head);">${escapeHtml(p.service || 'unknown')}</div>${extra}</td>
+                  <td class="dim" style="font-size:0.75rem;">${escapeHtml(p.version || p.product || '—')}</td>
+                  <td style="vertical-align: middle;"><span class="badge-soft ${p.state === 'open' ? 'badge-low' : 'badge-high'}" style="min-width:64px; text-align:center; padding: 4px 0; border-radius:6px;">${p.state.toUpperCase()}</span></td>
+                </tr>
+              `;
+          }).join('');
+
+          // Reputation Data (DNSBL)
+          const dnsbl = data.dnsbl || {};
+          if (dnsbl.listed) {
+              portsHtml += `
+                <tr style="background: rgba(195, 77, 77, 0.04);">
+                  <td colspan="5" style="font-size:0.78rem; font-weight:700; color:var(--red); padding: 14px; border-top: 1px solid rgba(195, 77, 77, 0.1);">
+                    <i class="bi bi-exclamation-octagon-fill" style="margin-right:8px;"></i>
+                    SECURITY ALERT: THIS IP IS LISTED ON ${dnsbl.total_listings} REPUTATION BLACKLISTS.
+                  </td>
+                </tr>
+              `;
+          }
+
+          $('scanPortsBody').innerHTML = portsHtml || '<tr><td colspan="5" class="text-center py-5"><div class="dim mb-2"><i class="bi bi-shield-slash" style="font-size:1.5rem;"></i></div><div class="dim" style="font-size:0.85rem;">No open ports or active services were detected during this scan.</div></td></tr>';
+    }
+
+    // Stop polling if modal is closed
+    document.getElementById('scanModal').addEventListener('hidden.bs.modal', function () {
+        if (scanPollTimer) {
+            clearTimeout(scanPollTimer);
+            scanPollTimer = null;
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (e.target.classList.contains('ip')) {
+        triggerScan(e.target.textContent);
+      }
+    });
+
+    loadDashboardData().catch((error) => {
+      console.error(error);
+      $('summaryCards').innerHTML = '<div class="dim">Unable to load dashboard data.</div>';
+      $('recentConnections').innerHTML = '<tr><td colspan="8" class="dim">No data available.</td></tr>';
+    });
+
+    $('recentPrevBtn').addEventListener('click', () => {
+      loadRecentConnections(recentConnectionsPage - 1).catch(console.error);
+    });
+
+    $('recentNextBtn').addEventListener('click', () => {
+      loadRecentConnections(recentConnectionsPage + 1).catch(console.error);
+    });
+
+    if ($('timelineFilter')) {
+      $('timelineFilter').addEventListener('change', () => {
+        loadRecentConnections(1).catch(console.error);
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Infrastructure & Intelligence Reports</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <style>
+    :root {
+      --bg: #f6f3ed;
+      --surface: #fffdf8;
+      --surface-2: #f2ede4;
+      --border: #ded7cb;
+      --text: #1e2630;
+      --muted: #6d7684;
+      --head: #101723;
+      --accent: #0e7aa8;
+      --accent-2: #167a61;
+      --shadow: 0 10px 30px rgba(17, 24, 39, .04);
+    }
+
+    body {
+      margin: 0; font-family: 'IBM Plex Sans', sans-serif; color: var(--text); background: var(--bg); min-height: 100vh;
+    }
+
+    .shell { max-width: 1600px; margin: 0 auto; padding: 20px; }
+    
+    /* Navbar */
+    .navbar-shell {
+      display: flex; align-items: center; justify-content: space-between; padding: 12px 20px;
+      background: rgba(255, 253, 248, .9); border: 1px solid var(--border); border-radius: 16px;
+      backdrop-filter: blur(10px); position: sticky; top: 10px; z-index: 1000; box-shadow: var(--shadow);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+      color: white; background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    }
+    .brand h1 { margin: 0; font-size: 1rem; font-weight: 700; color: var(--head); }
+    
+    .nav-links { display: flex; gap: 8px; }
+    .nav-links a {
+      text-decoration: none; color: var(--text); padding: 6px 14px; border-radius: 99px;
+      font-family: 'IBM Plex Mono', monospace; font-size: .7rem; font-weight: 600; text-transform: uppercase;
+      border: 1px solid transparent; transition: all .2s;
+    }
+    .nav-links a:hover, .nav-links a.active { background: var(--surface); border-color: var(--border); color: var(--accent); }
+
+    /* Library Grid (Mini version) */
+    .library-section { margin-top: 30px; }
+    .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
+    .section-head h2 { font-size: .85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin: 0; }
+    
+    .pcap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    
+    .pagination-bar { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 30px; }
+    .btn-page {
+        background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px;
+        font-family: 'IBM Plex Mono', monospace; font-size: .7rem; font-weight: 700; color: var(--muted);
+        transition: all .2s;
+    }
+    .btn-page:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .btn-page:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Reports Layout */
+    .pcap-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow); }
+    .pcap-card.active { border-color: var(--accent); background: rgba(14, 122, 168, 0.03); box-shadow: 0 0 0 2px var(--accent); }
+    .pcap-card .name { font-size: .85rem; font-weight: 700; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pcap-card .meta { font-size: .7rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+
+    /* Reports Layout */
+    .reports-layout { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+    .report-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; height: 650px; }
+    .report-head { padding: 15px 18px; border-bottom: 1px solid var(--border); background: var(--surface-2); display: flex; align-items: center; gap: 10px; }
+    .report-head i { color: var(--accent); font-size: 1.1rem; }
+    .report-head h3 { margin: 0; font-size: .85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+    
+    .report-body { flex: 1; overflow-y: auto; padding: 0; }
+
+    .table-custom { width: 100%; border-collapse: collapse; }
+    .table-custom th {
+       position: sticky; top: 0; background: var(--surface); z-index: 10;
+       padding: 10px 15px; text-align: left; font-size: .65rem; color: var(--muted); font-weight: 700; text-transform: uppercase;
+       border-bottom: 1px solid var(--border);
+    }
+    .table-custom td { padding: 10px 15px; font-size: .78rem; border-bottom: 1px solid var(--border); font-family: 'IBM Plex Mono', monospace; }
+    .table-custom tr:last-child td { border-bottom: none; }
+    .table-custom tr:hover td { background: rgba(14, 122, 168, 0.03); }
+
+    .badge-pkt { 
+      background: rgba(14, 122, 168, 0.1); color: var(--accent); padding: 2px 6px; border-radius: 4px; font-size: .65rem; font-weight: 700;
+    }
+    
+    .search-sub { padding: 10px 15px; border-bottom: 1px solid var(--border); }
+    .search-sub input { 
+        width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: .75rem; background: var(--bg);
+    }
+
+    .loading-overlay { display: none; padding: 40px; text-align: center; color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: .8rem; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="navbar-shell">
+      <div class="brand">
+        <div class="brand-mark"><i class="bi bi-graph-up-arrow"></i></div>
+        <h1>Infrastructure & Intelligence Reports</h1>
+      </div>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/dashboard{% if selected_pcap_id %}?pcap_id={{ selected_pcap_id|urlencode }}{% endif %}">Overview</a>
+        <a href="/details{% if selected_pcap_id %}?pcap_id={{ selected_pcap_id|urlencode }}{% endif %}">Details</a>
+        <a class="active" href="/report{% if selected_pcap_id %}?pcap_id={{ selected_pcap_id|urlencode }}{% endif %}">Report</a>
+      </div>
+    </div>
+
+    <!-- PCAP Grid Section -->
+    <div class="library-section">
+      <div class="section-head">
+        <h2>Capture Library</h2>
+        <div id="gridStatus" class="meta" style="font-size: .7rem; color: var(--muted);">Showing captures 1-12 of 118</div>
+      </div>
+      <div class="pcap-grid" id="pcapGrid">
+         <!-- Populated via JS -->
+      </div>
+      <div class="pagination-bar">
+        <button class="btn-page" id="prevBtn" onclick="changePage(-1)" disabled><i class="bi bi-chevron-left"></i> PREV</button>
+        <button class="btn-page" id="nextBtn" onclick="changePage(1)">NEXT <i class="bi bi-chevron-right"></i></button>
+      </div>
+    </div>
+
+    <!-- Master Reports Layout -->
+    <div class="section-head mb-3">
+      <h2 id="reportHeader">Global Traffic Intelligence</h2>
+    </div>
+    
+    <div class="reports-layout">
+      
+      <!-- ISP REPORT -->
+      <div class="report-panel">
+        <div class="report-head">
+          <i class="bi bi-building"></i>
+          <h3>Hosting & ISP Report</h3>
+        </div>
+        <div class="search-sub"><input type="text" placeholder="Filter ISPs..." onkeyup="filterTable('ispTable', this.value)"></div>
+        <div class="report-body">
+          <table class="table-custom" id="ispTable">
+            <thead><tr><th>Rank</th><th>Provider</th><th>Captures</th><th>Packets</th></tr></thead>
+            <tbody id="ispBody"></tbody>
+          </table>
+          <div id="ispLoad" class="loading-overlay">FETCHING DATA...</div>
+        </div>
+      </div>
+
+      <!-- CITY REPORT -->
+      <div class="report-panel">
+        <div class="report-head">
+          <i class="bi bi-geo-alt"></i>
+          <h3>Regional Hub Report (City)</h3>
+        </div>
+        <div class="search-sub"><input type="text" placeholder="Filter Cities..." onkeyup="filterTable('cityTable', this.value)"></div>
+        <div class="report-body">
+          <table class="table-custom" id="cityTable">
+            <thead><tr><th>Rank</th><th>City</th><th>Captures</th><th>Packets</th></tr></thead>
+            <tbody id="cityBody"></tbody>
+          </table>
+          <div id="cityLoad" class="loading-overlay">FETCHING DATA...</div>
+        </div>
+      </div>
+
+      <!-- COUNTRY REPORT -->
+      <div class="report-panel">
+        <div class="report-head">
+          <i class="bi bi-globe"></i>
+          <h3>Geographic Report (Country)</h3>
+        </div>
+        <div class="search-sub"><input type="text" placeholder="Filter Countries..." onkeyup="filterTable('countryTable', this.value)"></div>
+        <div class="report-body">
+          <table class="table-custom" id="countryTable">
+            <thead><tr><th>Rank</th><th>Country</th><th>Captures</th><th>Packets</th></tr></thead>
+            <tbody id="countryBody"></tbody>
+          </table>
+          <div id="countryLoad" class="loading-overlay">FETCHING DATA...</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let activePcapId = null;
+    let currentPage = 1;
+    const perPage = 11; // 11 + 1 (Global) = 12 cards
+
+    async function api(url) { 
+        const r = await fetch(url); 
+        if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+        return r.json(); 
+    }
+
+    // Filter tables
+    function filterTable(tableId, query) {
+        const rows = $(tableId).querySelectorAll('tbody tr');
+        rows.forEach(row => {
+            row.style.display = row.innerText.toLowerCase().includes(query.toLowerCase()) ? '' : 'none';
+        });
+    }
+
+    // Render PCAP Grid with Pagination
+    async function loadGrid(page = 1) {
+        try {
+            currentPage = page;
+            const resp = await api(`/api/pcaps?page=${page}&per_page=${perPage}`);
+            const pcaps = resp.data || [];
+            const total = resp.pagination?.total || 118;
+            
+            const grid = $('pcapGrid');
+            
+            // First page always shows "Global Aggregate"
+            let globalCard = '';
+            if (page === 1) {
+                globalCard = `
+                    <div class="pcap-card active" id="card-global" onclick="selectPcap(null, this)">
+                        <div class="name">Global Aggregate</div>
+                        <div class="meta">Across all ${total} captures</div>
+                    </div>
+                `;
+            }
+
+            grid.innerHTML = globalCard + pcaps.map(p => `
+                <div class="pcap-card ${p.pcap_id === activePcapId ? 'active' : ''}" id="card-${p.pcap_id}" onclick="selectPcap('${p.pcap_id}', this)">
+                    <div class="name">${p.filename}</div>
+                    <div class="meta">ID: ${p.pcap_id.substring(0,8)}... • ${p.size ? (p.size/1024).toFixed(0) : 0} KB</div>
+                </div>
+            `).join('');
+
+            // Update status and buttons
+            const start = ((page - 1) * perPage) + 1;
+            const end = Math.min(page * perPage, total);
+            $('gridStatus').textContent = `Showing captures ${start}-${end} of ${total}`;
+            
+            $('prevBtn').disabled = (page === 1);
+            $('nextBtn').disabled = (end >= total);
+
+        } catch (e) {
+            console.error('Failed to load grid', e);
+        }
+    }
+
+    function changePage(delta) {
+        loadGrid(currentPage + delta);
+    }
+
+    // Select PCAP and update reports
+    function selectPcap(pcapId, el) {
+        document.querySelectorAll('.pcap-card').forEach(c => c.classList.remove('active'));
+        el.classList.add('active');
+        activePcapId = pcapId;
+        
+        $('reportHeader').textContent = pcapId ? `Report for ${el.querySelector('.name').textContent}` : 'Global Traffic Intelligence';
+        loadReports(pcapId);
+    }
+
+    // Load Geo Reports
+    async function loadReports(pcapId) {
+        const ispBody = $('ispBody');
+        const cityBody = $('cityBody');
+        const countryBody = $('countryBody');
+        
+        // Clear and show loading
+        [ispBody, cityBody, countryBody].forEach(b => b.innerHTML = '');
+        document.querySelectorAll('.loading-overlay').forEach(l => l.style.display = 'block');
+
+        try {
+            const query = pcapId ? `?pcap_id=${pcapId}` : '';
+            const resp = await api(`/api/reports/geo${query}`);
+            const data = resp.data || {};
+
+            document.querySelectorAll('.loading-overlay').forEach(l => l.style.display = 'none');
+
+            // Render ISP
+            ispBody.innerHTML = (data.isps || []).map((b, i) => `
+                <tr>
+                    <td>${i+1}</td>
+                    <td style="font-weight:600;">${b.name || 'Unknown'}</td>
+                    <td>${b.count}</td>
+                    <td><span class="badge-pkt">${b.packets.toLocaleString()}</span></td>
+                </tr>
+            `).join('') || '<tr><td colspan="4" class="text-center py-4">No ISP data available</td></tr>';
+
+            // Render City
+            cityBody.innerHTML = (data.cities || []).map((b, i) => `
+                <tr>
+                    <td>${i+1}</td>
+                    <td style="font-weight:600;">${b.name || 'Unknown'}</td>
+                    <td>${b.count}</td>
+                    <td><span class="badge-pkt">${b.packets.toLocaleString()}</span></td>
+                </tr>
+            `).join('') || '<tr><td colspan="4" class="text-center py-4">No City data available</td></tr>';
+
+            // Render Country
+            countryBody.innerHTML = (data.countries || []).map((b, i) => `
+                <tr>
+                    <td>${i+1}</td>
+                    <td style="font-weight:600;">${b.name || 'Unknown'}</td>
+                    <td>${b.count}</td>
+                    <td><span class="badge-pkt">${b.packets.toLocaleString()}</span></td>
+                </tr>
+            `).join('') || '<tr><td colspan="4" class="text-center py-4">No Country data available</td></tr>';
+
+        } catch (e) {
+            console.error('Failed to load reports', e);
+            document.querySelectorAll('.loading-overlay').forEach(l => l.innerHTML = 'ERROR LOADING DATA');
+        }
+    }
+
+    window.onload = () => {
+        loadGrid();
+        loadReports(null); // Initial global report
+    }
+  </script>
+</body>
+</html>
