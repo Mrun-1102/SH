@@ -720,6 +720,196 @@ def get_repository_stats():
         "traffic_volume": traffic_volume,
     }
 
+def get_global_aggregation():
+    es = get_es()
+    if not es:
+        return {
+            "total_external_ips": 0,
+            "total_internal_ips": 0,
+            "total_bytes": 0,
+            "total_packets": 0,
+            "total_infected_hosts": 0,
+            "total_dns_domains": 0,
+            "total_url_domains": 0,
+            "total_protocols": 0,
+            "top_dns_domains": [],
+            "top_url_domains": [],
+            "top_active_ips": [],
+            "protocol_breakdown": []
+        }
+
+    stats = {
+        "total_external_ips": 0,
+        "total_internal_ips": 0,
+        "total_bytes": 0,
+        "total_packets": 0,
+        "total_infected_hosts": 0,
+        "total_dns_domains": 0,
+        "total_url_domains": 0,
+        "total_protocols": 0,
+        "top_dns_domains": [],
+        "top_url_domains": [],
+        "top_active_ips": [],
+        "protocol_breakdown": []
+    }
+
+    try:
+        # Agg 1: Total Bytes, Packets, and Infected Hosts
+        res = es.search(
+            index=PCAP_CAPTURES_INDEX,
+            body={
+                "size": 0,
+                "aggs": {
+                    "total_bytes": {"sum": {"field": "total_bytes"}},
+                    "total_packets": {"sum": {"field": "total_packets"}}
+                }
+            }
+        )
+        aggs = res.get("aggregations", {})
+        stats["total_bytes"] = int(aggs.get("total_bytes", {}).get("value", 0))
+        stats["total_packets"] = int(aggs.get("total_packets", {}).get("value", 0))
+        
+        # Infected Hosts (from Dashboard index)
+        # We use .keyword for aggregation on text fields and exclude "Unknown"
+        res_infected = es.search(
+            index=PCAP_DASHBOARD_INDEX,
+            body={
+                "size": 0,
+                "query": {
+                    "bool": {
+                        "must_not": [
+                            {"term": {"infected_host.keyword": "Unknown"}}
+                        ]
+                    }
+                },
+                "aggs": {"infected": {"cardinality": {"field": "infected_host.keyword"}}}
+            }
+        )
+        stats["total_infected_hosts"] = int(res_infected.get("aggregations", {}).get("infected", {}).get("value", 0))
+
+    except Exception: pass
+
+    try:
+        # Agg 2: Total IPs (External/Internal)
+        res = es.search(
+            index=PCAP_IPS_INDEX,
+            body={
+                "size": 0,
+                "aggs": {
+                    "external_count": {
+                        "filter": {"term": {"is_internal": False}},
+                        "aggs": {"unique": {"cardinality": {"field": "ip"}}}
+                    },
+                    "internal_count": {
+                        "filter": {"term": {"is_internal": True}},
+                        "aggs": {"unique": {"cardinality": {"field": "ip"}}}
+                    },
+                    "top_active": {
+                        "terms": {"field": "ip", "size": 10, "order": {"total_packets": "desc"}},
+                        "aggs": {"total_packets": {"sum": {"field": "packet_count"}}}
+                    }
+                }
+            }
+        )
+        aggs = res.get("aggregations", {})
+        stats["total_external_ips"] = int(aggs.get("external_count", {}).get("unique", {}).get("value", 0))
+        stats["total_internal_ips"] = int(aggs.get("internal_count", {}).get("unique", {}).get("value", 0))
+        
+        buckets = aggs.get("top_active", {}).get("buckets", [])
+        stats["top_active_ips"] = [{"ip": b["key"], "packets": int(b.get("total_packets", {}).get("value", 0))} for b in buckets]
+    except Exception: pass
+
+    try:
+        # Agg 3: DNS and URL Domains
+        res = es.search(
+            index=PCAP_DNS_INDEX,
+            body={
+                "size": 0,
+                "aggs": {
+                    "dns_stats": {
+                        "filter": {"term": {"type": "dns"}},
+                        "aggs": {
+                            "total": {"cardinality": {"field": "domain"}},
+                            "top": {
+                                "terms": {"field": "domain", "size": 5, "order": {"total_count": "desc"}},
+                                "aggs": {"total_count": {"sum": {"field": "count"}}}
+                            }
+                        }
+                    },
+                    "url_stats": {
+                        "filter": {"term": {"type": "http"}},
+                        "aggs": {
+                            "total": {"cardinality": {"field": "domain"}},
+                            "top": {
+                                "terms": {"field": "domain", "size": 5, "order": {"total_count": "desc"}},
+                                "aggs": {"total_count": {"sum": {"field": "count"}}}
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        aggs = res.get("aggregations", {})
+        
+        # DNS
+        dns_agg = aggs.get("dns_stats", {})
+        stats["total_dns_domains"] = int(dns_agg.get("total", {}).get("value", 0))
+        stats["top_dns_domains"] = [{"domain": b["key"], "count": int(b.get("total_count", {}).get("value", 0))} for b in dns_agg.get("top", {}).get("buckets", [])]
+        
+        # URL
+        url_agg = aggs.get("url_stats", {})
+        stats["total_url_domains"] = int(url_agg.get("total", {}).get("value", 0))
+        stats["top_url_domains"] = [{"domain": b["key"], "count": int(b.get("total_count", {}).get("value", 0))} for b in url_agg.get("top", {}).get("buckets", [])]
+        
+    except Exception: pass
+
+    try:
+        # Agg 4: Protocols
+        res = es.search(
+            index="zeek-conn",
+            body={
+                "size": 0,
+                "aggs": {
+                    "total_protos": {"cardinality": {"field": "proto.keyword"}},
+                    "protocols": {
+                        "terms": {"field": "proto.keyword", "size": 10}
+                    }
+                }
+            }
+        )
+        aggs = res.get("aggregations", {})
+        stats["total_protocols"] = int(aggs.get("total_protos", {}).get("value", 0))
+        buckets = aggs.get("protocols", {}).get("buckets", [])
+        stats["protocol_breakdown"] = [{"protocol": b["key"], "count": b["doc_count"]} for b in buckets]
+    except Exception: pass
+
+    try:
+        # Agg 5: Direction (Sum from Dashboard documents)
+        from collections import Counter
+        res_dir = es.search(
+            index=PCAP_DASHBOARD_INDEX,
+            body={
+                "size": 1000,
+                "_source": ["direction_breakdown"]
+            }
+        )
+        dir_totals = Counter()
+        for hit in res_dir["hits"]["hits"]:
+            breakdown = hit["_source"].get("direction_breakdown", [])
+            for item in breakdown:
+                label = item.get("label")
+                value = item.get("value", 0)
+                if label:
+                    dir_totals[label] += value
+        
+        stats["direction_breakdown"] = [{"label": k, "value": v} for k, v in dir_totals.items()]
+    except Exception: pass
+
+    return stats
+
+
+
+
 def get_ip_breakdown(pcap_id=None):
     es = get_es()
     if not es: return {"isps": [], "countries": [], "cities": []}
@@ -730,7 +920,10 @@ def get_ip_breakdown(pcap_id=None):
     def make_agg(field):
         return {
             "terms": {"field": field, "size": 1000},
-            "aggs": {"packets": {"sum": {"field": "packet_count"}}}
+            "aggs": {
+                "packets": {"sum": {"field": "packet_count"}},
+                "unique_ips": {"cardinality": {"field": "ip"}}
+            }
         }
 
     aggs = {
@@ -745,11 +938,65 @@ def get_ip_breakdown(pcap_id=None):
         
         def extract(name):
             buckets = aggregations.get(name, {}).get("buckets", [])
-            return [{"name": b["key"], "count": b["doc_count"], "packets": int(b.get("packets", {}).get("value", 0))} for b in buckets]
+            return [{"name": b["key"], "count": int(b.get("unique_ips", {}).get("value", 0)), "packets": int(b.get("packets", {}).get("value", 0))} for b in buckets]
 
         return {"isps": extract("isps"), "countries": extract("countries"), "cities": extract("cities")}
     except Exception:
         return {"isps": [], "countries": [], "cities": []}
+
+def get_report_details(report_type, value):
+    """
+    Returns a detailed list of unique IPs for a specific ISP, City, or Country.
+    """
+    es = get_es()
+    if not es: return []
+    
+    field_map = {'isp': 'isp', 'city': 'city', 'country': 'country'}
+    field = field_map.get(report_type.lower())
+    if not field: return []
+    print(f"DEBUG: Querying {field} = '{value}'")
+    
+    body = {
+        "size": 0,
+        "query": {"term": {field: value}},
+        "aggs": {
+            "unique_ips": {
+                "terms": {"field": "ip", "size": 10000},
+                "aggs": {
+                    "packets": {"sum": {"field": "packet_count"}},
+                    "isp": {"terms": {"field": "isp", "size": 1, "missing": "Unknown"}},
+                    "city": {"terms": {"field": "city", "size": 1, "missing": "Unknown"}},
+                    "country": {"terms": {"field": "country", "size": 1, "missing": "Unknown"}}
+                }
+            }
+        }
+    }
+    
+    try:
+        res = es.search(index=PCAP_IPS_INDEX, body=body)
+        buckets = res.get("aggregations", {}).get("unique_ips", {}).get("buckets", [])
+        
+        results = []
+        for b in buckets:
+            isp_buckets = b.get("isp", {}).get("buckets", [])
+            city_buckets = b.get("city", {}).get("buckets", [])
+            country_buckets = b.get("country", {}).get("buckets", [])
+            
+            isp = isp_buckets[0].get("key", "Unknown") if isp_buckets else "Unknown"
+            city = city_buckets[0].get("key", "Unknown") if city_buckets else "Unknown"
+            country = country_buckets[0].get("key", "Unknown") if country_buckets else "Unknown"
+            
+            results.append({
+                "ip": b["key"],
+                "packets": int(b.get("packets", {}).get("value", 0)),
+                "isp": isp, "city": city, "country": country
+            })
+            
+        results.sort(key=lambda x: x['packets'], reverse=True)
+        return results
+    except Exception as e:
+        print(f"Details Error: {e}")
+        return []
 
 def get_dns_breakdown(pcap_id=None):
     es = get_es()
@@ -808,6 +1055,69 @@ def get_pcap_analysis(pcap_id):
 def get_all_pcap_analyses():
     """Return all PCAP summaries sorted by timestamp."""
     return get_all_pcap_summaries()
+
+
+def get_geo_grid_aggregation(precision=3):
+    """
+    Groups 50,000+ IPs into geographical clusters using Geo-Grid aggregation.
+    Returns lat/lon centroids and counts for each cluster.
+    """
+    es = get_es()
+    if not es:
+        return []
+
+    body = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "must": [
+                    {"term": {"is_internal": False}}
+                ],
+                "must_not": [
+                    {"term": {"latitude": 0}},
+                    {"term": {"longitude": 0}}
+                ]
+            }
+        },
+        "aggs": {
+            "grid": {
+                "geohash_grid": {
+                    "field": "location",
+                    "precision": precision
+                },
+                "aggs": {
+                    "centroid": {
+                        "geo_centroid": {"field": "location"}
+                    },
+                    "unique_ips": {
+                        "cardinality": {"field": "ip"}
+                    }
+                }
+            }
+        }
+    }
+
+    try:
+        res = es.search(index=PCAP_IPS_INDEX, body=body)
+        buckets = res.get("aggregations", {}).get("grid", {}).get("buckets", [])
+        
+        points = []
+        for b in buckets:
+            centroid = b.get("centroid", {}).get("location", {})
+            unique_count = b.get("unique_ips", {}).get("value", 0)
+            if centroid:
+                points.append({
+                    "lat": centroid.get("lat"),
+                    "lon": centroid.get("lon"),
+                    "count": int(unique_count),
+                    "hits": b["doc_count"], # Keep original doc count as 'hits' if needed
+                    "geohash": b["key"]
+                })
+        return points
+
+    except Exception as e:
+        print(f"✗ Geo Grid Aggregation Error: {e}")
+        return []
 
 
 def get_recent_logs_from_es(log_type, timeline=None, page=1, per_page=50, pcap_id=None):

@@ -886,6 +886,7 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
     }
 
     ips_data = []
+    # External IPs
     for ip_obj in external_ips:
         ips_data.append({
             'ip': ip_obj.get('ip'),
@@ -897,6 +898,16 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
             'longitude': ip_obj.get('longitude'),
             'is_internal': False
         })
+    
+    # Internal IPs
+    for ip_obj in internal_ips:
+        ips_data.append({
+            'ip': ip_obj.get('ip'),
+            'packet_count': ip_obj.get('packet_count', 0),
+            'remarks': ip_obj.get('remarks'),
+            'is_internal': True
+        })
+
     
     dns_data = []
     for domain, count in dns_domain_counts.items():

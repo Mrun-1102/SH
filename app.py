@@ -470,6 +470,32 @@ def get_geo_report():
     try:
         pcap_id = request.args.get('pcap_id')
         data = elastic.get_geo_aggregation(pcap_id)
+        
+        # If no pcap_id, also include global repository stats
+        if not pcap_id:
+            global_stats = elastic.get_global_aggregation()
+            if data and isinstance(data, dict):
+                data['global_stats'] = global_stats
+                
+        return api_response(data=data)
+    except Exception as e:
+        return api_response(data=None, success=False, error=str(e)), 500
+
+
+@app.route('/api/reports/details/<report_type>/<report_value>')
+def get_report_details_path(report_type, report_value):
+    data = elastic.get_report_details(report_type, report_value)
+    return api_response(data=data, meta={
+        "total_unique_ips": len(data),
+        "report_type": report_type,
+        "filter_value": report_value
+    })
+
+
+@app.route('/api/stats/global')
+def get_global_stats():
+    try:
+        data = elastic.get_global_aggregation()
         return api_response(data=data)
     except Exception as e:
         return api_response(data=None, success=False, error=str(e)), 500
@@ -620,6 +646,22 @@ def backfill_ip_intelligence():
     try:
         result = _backfill_existing_ip_intelligence()
         return api_response(data=result)
+    except Exception as e:
+        return api_response(data=None, success=False, error=str(e)), 500
+
+
+@app.route('/api/map/external-ips')
+def get_global_map_data():
+    try:
+        precision = request.args.get('precision', 3, type=int)
+        # Safe range for Geohash precision is 1-12. 3 is roughly 150km, 5 is 5km.
+        safe_precision = max(1, min(precision, 12))
+        
+        data = elastic.get_geo_grid_aggregation(precision=safe_precision)
+        return api_response(data=data, meta={
+            "total_clusters": len(data),
+            "precision": safe_precision
+        })
     except Exception as e:
         return api_response(data=None, success=False, error=str(e)), 500
 
