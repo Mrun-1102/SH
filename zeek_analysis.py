@@ -857,6 +857,62 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
             json.dump(stats_return_obj, f)
     except: pass
 
+    # Pre-map HTTP URIs to extract proper filenames
+    uid_to_filename = {}
+    for h_log in http_logs:
+        h_uid = h_log.get('uid')
+        h_uri = h_log.get('uri')
+        if h_uid and h_uri and h_uri != '-':
+            clean_uri = str(h_uri).split('?')[0]
+            if '/' in clean_uri:
+                extracted = clean_uri.split('/')[-1]
+                # Check for realistic extension (e.g., .exe, .pdf, .cab)
+                if extracted and len(extracted) > 1 and '.' in extracted[-6:]:
+                    uid_to_filename[h_uid] = extracted
+
+    # Files and Payloads aggregation
+    payloads_data = []
+    files_map = {}
+    for fl in files_logs:
+        # Create a unique key based on source, mime, and filename
+        source = fl.get('source', 'Unknown')
+        mime = fl.get('mime_type')
+        if not mime or mime == '(empty)' or mime == '-': mime = 'Unknown'
+        
+        fname = fl.get('filename')
+        uid = fl.get('uid') or fl.get('conn_uids', '').split(',')[0]
+        
+        if not fname or fname == '-':
+            # 1. Attempt to resolve proper filename from HTTP logs
+            if uid and uid in uid_to_filename:
+                fname = uid_to_filename[uid]
+            # 2. Assign professional defaults for known application streams
+            elif source == 'SSL':
+                fname = "SSL/TLS Certificate Payload"
+            elif source == 'HTTP':
+                fname = "HTTP Binary Download"
+            else:
+                mime_part = mime.split('/')[-1] if mime and '/' in mime else 'data'
+                fname = f"Network Stream ({mime_part})"
+        
+        size = int(fl.get('total_bytes') or fl.get('seen_bytes') or 0)
+        key = f"{source}|{mime}|{fname}"
+        
+        if key not in files_map:
+            files_map[key] = {
+                'filename': fname,
+                'mime_type': mime,
+                'protocol': source,
+                'total_size': 0,
+                'count': 0
+            }
+        
+        files_map[key]['total_size'] += size
+        files_map[key]['count'] += 1
+
+    payloads_data = list(files_map.values())
+    print(f"DEBUG: payloads_data length: {len(payloads_data)}")
+
     # Index analysis for the dropdown context
     external_ip_connections = _build_external_ip_connections(conn_logs)
     internal_connections_flat = _build_internal_connections(conn_logs)
@@ -916,7 +972,7 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
         dns_data.append({'domain': domain, 'type': 'http', 'count': count})
 
     try:
-        elastic.bulk_index_granular_data(pcap_id, file_name, summary_data, ips_data, dns_data)
+        elastic.bulk_index_granular_data(pcap_id, file_name, summary_data, ips_data, dns_data, payloads_data)
     except Exception as e:
         print(f"Warning: Failed to perform granular indexing: {e}")
 

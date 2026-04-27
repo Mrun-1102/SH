@@ -302,6 +302,7 @@ def scan_ports(ip, top_ports=200, include_scripts=False, include_os=False):
         "--max-retries", "1",
         "--host-timeout", "60s",
         "--top-ports", str(top_ports),
+        # "-O", "--osscan-guess"
     ]
     if include_scripts:
         args.append("-sC")

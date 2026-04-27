@@ -401,9 +401,16 @@ def get_pcap_analysis(pcap_id):
         )
         if data and data.get('file_id') == pcap_id:
             response_data = dict(data)
+            # Remove redundant or unused fields
             response_data.pop('recent_connections', None)
             response_data.pop('file_payloads', None)
-            response_data.update(get_site_status_context(es, None))
+            
+            # Add the new 'Files and Payloads' intelligence (cleaning up redundant IDs)
+            payloads = elastic.get_payloads_summary(pcap_id)
+            for p in payloads: p.pop('pcap_id', None)
+            
+            response_data['files_and_payloads'] = payloads
+            
             return api_response(data=response_data)
         return api_response(data=None, success=False, error=f'No analysis found for {pcap_id}'), 404
     except Exception as e:
@@ -416,9 +423,18 @@ def get_latest_pcap_analysis():
         data = elastic.get_latest_dashboard_document()
         if data:
             response_data = dict(data)
+            # Remove redundant fields
             response_data.pop('recent_connections', None)
             response_data.pop('file_payloads', None)
-            response_data.update(get_site_status_context(es, None))
+            
+            pcap_id = response_data.get('file_id')
+            if pcap_id:
+                payloads = elastic.get_payloads_summary(pcap_id)
+                for p in payloads: p.pop('pcap_id', None)
+                response_data['files_and_payloads'] = payloads
+            else:
+                response_data['files_and_payloads'] = []
+            
             return api_response(data=response_data)
         return api_response(data=None, success=False, error='No dashboard documents found in Elasticsearch'), 404
     except Exception as e:

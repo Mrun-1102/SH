@@ -16,6 +16,7 @@ ES_PASSWORD = os.getenv("ELASTIC_PASSWORD")
 PCAP_CAPTURES_INDEX = "pcap-captures"  # Metadata summary
 PCAP_IPS_INDEX = "pcap-ips"            # Granular IP records
 PCAP_DNS_INDEX = "pcap-dns"            # Granular DNS/URL records
+PCAP_PAYLOADS_INDEX = "pcap-payloads"  # Granular file/payload records
 PCAP_DASHBOARD_INDEX = "pcap-dashboard"  # Full dashboard payload
 
 # Legacy Index (for reference/compatibility)
@@ -59,6 +60,12 @@ def get_es():
     return _es_instance
 
 # ---------------- INDEX CREATION ----------------
+def _create_index_safely(index_name, mapping):
+    es = get_es()
+    if es and not es.indices.exists(index=index_name):
+        es.indices.create(index=index_name, body=mapping)
+        print(f"✓ Created Index: {index_name}")
+
 def create_granular_indexes():
     es = get_es()
     if not es: return
@@ -157,7 +164,7 @@ def create_granular_indexes():
                 },
                 "time_series": {
                     "properties": {
-                        "label": {"type": "date"},
+                        "label": {"type": "keyword"},
                         "value": {"type": "long"}
                     }
                 },
@@ -363,15 +370,24 @@ def create_granular_indexes():
         }
     }
 
-    for idx, mapping in [
-        (PCAP_CAPTURES_INDEX, captures_mapping),
-        (PCAP_IPS_INDEX, ips_mapping),
-        (PCAP_DNS_INDEX, dns_mapping),
-        (PCAP_DASHBOARD_INDEX, dashboard_mapping),
-    ]:
-        if not es.indices.exists(index=idx):
-            es.indices.create(index=idx, body=mapping)
-            print(f"✓ Created Index: {idx}")
+    # 4. PAYLOADS
+    payloads_mapping = {
+        "mappings": {
+            "properties": {
+                "pcap_id": {"type": "keyword"},
+                "filename": {"type": "keyword"},
+                "type": {"type": "keyword"},
+                "protocol": {"type": "keyword"},
+                "destination_ip": {"type": "ip"}
+            }
+        }
+    }
+
+    _create_index_safely(PCAP_CAPTURES_INDEX, captures_mapping)
+    _create_index_safely(PCAP_IPS_INDEX, ips_mapping)
+    _create_index_safely(PCAP_DNS_INDEX, dns_mapping)
+    _create_index_safely(PCAP_PAYLOADS_INDEX, payloads_mapping)
+    _create_index_safely(PCAP_DASHBOARD_INDEX, dashboard_mapping)
 
 def create_pcap_index():
     # Keep original for compatibility but prioritize granular
@@ -392,9 +408,14 @@ def create_pcap_index():
 
 # ---------------- INDEXING ----------------
 
-def bulk_index_granular_data(pcap_id, pcap_filename, summary_data, ips_data, dns_data):
+def bulk_index_granular_data(pcap_id, pcap_filename, summary_data, ips_data, dns_data, payloads_data=[]):
     es = get_es()
     if not es: return
+    
+    # 0. Cleanup old records for this PCAP to prevent duplication
+    try:
+        es.delete_by_query(index=PCAP_PAYLOADS_INDEX, body={"query": {"term": {"pcap_id": pcap_id}}})
+    except: pass
 
     actions = []
 
@@ -428,6 +449,14 @@ def bulk_index_granular_data(pcap_id, pcap_filename, summary_data, ips_data, dns
         actions.append({
             "_index": PCAP_DNS_INDEX,
             "_source": dns_record
+        })
+
+    # 4. Payload Records
+    for payload_record in payloads_data:
+        payload_record['pcap_id'] = pcap_id
+        actions.append({
+            "_index": PCAP_PAYLOADS_INDEX,
+            "_source": payload_record
         })
 
     try:
@@ -1047,7 +1076,26 @@ def get_ip_scan(ip):
 
 # ---------------- LEGACY COMPAT ----------------
 
-def get_pcap_analysis(pcap_id):
+def get_payloads_summary(pcap_id):
+    """Fetch summary of files and payloads for a specific pcap_id."""
+    es = get_es()
+    if not es: return []
+    
+    try:
+        res = es.search(
+            index=PCAP_PAYLOADS_INDEX,
+            body={
+                "query": {"term": {"pcap_id": pcap_id}},
+                "size": 1000,
+                "sort": [{"total_size": "desc"}]
+            }
+        )
+        hits = res.get("hits", {}).get("hits", [])
+        return [h["_source"] for h in hits]
+    except Exception:
+        return []
+
+def get_pcap_analytics(pcap_id):
     """Fetch a single PCAP summary from the captures index."""
     return get_pcap_summary(pcap_id)
 
