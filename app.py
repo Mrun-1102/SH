@@ -692,4 +692,4 @@ if __name__ == '__main__':
     # Dampened backfill: We don't start the aggressive thread on every boot
     # _start_backfill_thread()
 
-    app.run(host='0.0.0.0', debug=True, use_reloader=False, port=8003)
+    app.run(host='0.0.0.0', port=8003, debug=False, threaded=True)
