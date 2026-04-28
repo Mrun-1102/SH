@@ -371,9 +371,21 @@ def get_recent_logs(log_type):
                 )
             except Exception as error:
                 print(f"ES search failed, fallback to files: {error}")
-                result = build_recent_logs(app.config['ZEEK_LOGS_FOLDER'], log_type, page=page, per_page=per_page)
+                result = build_recent_logs(
+                    app.config['ZEEK_LOGS_FOLDER'],
+                    log_type,
+                    page=page,
+                    per_page=per_page,
+                    timeline=timeline
+                )
         else:
-            result = build_recent_logs(app.config['ZEEK_LOGS_FOLDER'], log_type, page=page, per_page=per_page)
+            result = build_recent_logs(
+                app.config['ZEEK_LOGS_FOLDER'],
+                log_type,
+                page=page,
+                per_page=per_page,
+                timeline=timeline
+            )
 
         return api_response(
             data=result.get('logs', []),
@@ -490,8 +502,7 @@ def get_geo_report():
         # If no pcap_id, also include global repository stats
         if not pcap_id:
             global_stats = elastic.get_global_aggregation()
-            if data and isinstance(data, dict):
-                data['global_stats'] = global_stats
+            return api_response(data=data, meta={"global_stats": global_stats})
                 
         return api_response(data=data)
     except Exception as e:

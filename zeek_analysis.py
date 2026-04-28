@@ -5,7 +5,7 @@ import ipaddress
 import json
 import os
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 from elasticsearch import helpers
 
@@ -1026,10 +1026,60 @@ def index_capture_documents(upload_folder, zeek_logs_folder, pcap_id):
 RECENT_CONN_LIMIT = 150
 RECENT_CONN_PER_PAGE_MAX = 20
 
-def build_recent_logs(zeek_logs_folder, log_type, page=None, per_page=None):
+def _timeline_to_cutoff(timeline):
+    if not timeline or timeline == 'default':
+        return None
+
+    now = datetime.now(timezone.utc)
+    timeline = str(timeline).strip()
+
+    if timeline == '5m':
+        return now - timedelta(minutes=5)
+    if timeline == '15d':
+        return now - timedelta(days=15)
+    if timeline == '45d':
+        return now - timedelta(days=45)
+    if timeline == '90d':
+        return now - timedelta(days=90)
+    if timeline in {'6M', '6m'}:
+        return now - timedelta(days=180)
+
+    return None
+
+
+def _parse_recent_log_timestamp(value):
+    if value in (None, '', '-'):
+        return None
+
+    try:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(float(value), timezone.utc)
+
+        text = str(value).strip()
+        try:
+            return datetime.fromtimestamp(float(text), timezone.utc)
+        except ValueError:
+            parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def build_recent_logs(zeek_logs_folder, log_type, page=None, per_page=None, timeline=None):
     logs = []
     for log_path in glob.glob(os.path.join(zeek_logs_folder, '*', f'{log_type}.log')):
         logs.extend(parse_zeek_log(log_path))
+
+    cutoff = _timeline_to_cutoff(timeline)
+    if cutoff is not None:
+        filtered_logs = []
+        for log in logs:
+            ts = _parse_recent_log_timestamp(log.get('@timestamp') or log.get('ts'))
+            if ts is not None and ts >= cutoff:
+                filtered_logs.append(log)
+        logs = filtered_logs
 
     if log_type == 'conn':
         logs = heapq.nlargest(RECENT_CONN_LIMIT, logs, key=lambda item: float(item.get('ts') or 0))

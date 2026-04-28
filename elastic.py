@@ -1,7 +1,7 @@
 import os
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import NotFoundError
 from elasticsearch.helpers import bulk
@@ -1168,6 +1168,27 @@ def get_geo_grid_aggregation(precision=3):
         return []
 
 
+def _timeline_to_cutoff(timeline):
+    if not timeline or timeline == "default":
+        return None
+
+    now = datetime.now(timezone.utc)
+    timeline = str(timeline).strip()
+
+    if timeline == "5m":
+        return now - timedelta(minutes=5)
+    if timeline == "15d":
+        return now - timedelta(days=15)
+    if timeline == "45d":
+        return now - timedelta(days=45)
+    if timeline == "90d":
+        return now - timedelta(days=90)
+    if timeline in {"6M", "6m"}:
+        return now - timedelta(days=180)
+
+    return None
+
+
 def get_recent_logs_from_es(log_type, timeline=None, page=1, per_page=50, pcap_id=None):
     es = get_es()
     if not es:
@@ -1177,6 +1198,16 @@ def get_recent_logs_from_es(log_type, timeline=None, page=1, per_page=50, pcap_i
     query = {"bool": {"must": []}}
     if pcap_id:
         query["bool"]["must"].append({"term": {"pcap_id": pcap_id}})
+
+    cutoff = _timeline_to_cutoff(timeline)
+    if cutoff is not None:
+        query["bool"]["must"].append({
+            "range": {
+                "@timestamp": {
+                    "gte": cutoff.isoformat()
+                }
+            }
+        })
 
     try:
         start = (page - 1) * per_page
