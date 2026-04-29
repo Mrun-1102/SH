@@ -5,6 +5,7 @@ import ipaddress
 import json
 import os
 import subprocess
+import re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 from elasticsearch import helpers
@@ -288,6 +289,28 @@ def _normalize_domain(value):
     return host or None
 
 
+def _is_ip_address(value):
+    try:
+        ipaddress.ip_address(str(value))
+        return True
+    except Exception:
+        return False
+
+
+_DOMAIN_RE = re.compile(r'^(?:[a-z0-9-]+\.)+[a-z0-9-]+$', re.IGNORECASE)
+
+
+def _is_probable_domain(value):
+    if not value:
+        return False
+
+    text = str(value).strip().lower()
+    if not text or _is_ip_address(text):
+        return False
+
+    return bool(_DOMAIN_RE.match(text))
+
+
 def _build_time_series(logs):
     buckets = Counter()
     for log in logs:
@@ -497,7 +520,7 @@ def _normalize_external_geo_rows(external_ips):
     return normalized
 
 
-def _prepare_elastic_data(pcap_id, file_name, external_ips, external_ip_connections, internal_connections, dns_queries=None, ioc_domains=None, ioc_urls=None, extra_stats=None):
+def _prepare_elastic_data(pcap_id, file_name, external_ips, external_ip_connections, internal_connections, dns_queries=None, extra_stats=None):
     enriched_external_ips = []
     
     for ext_ip_obj in external_ips:
@@ -526,9 +549,7 @@ def _prepare_elastic_data(pcap_id, file_name, external_ips, external_ip_connecti
         'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
         'external_ips': enriched_external_ips,
         'internal_connections': internal_connections,
-        'dns_queries': dns_queries,
-        'ioc_domains': ioc_domains,
-        'ioc_urls': ioc_urls
+        'dns_queries': dns_queries
     }
 
 
@@ -568,8 +589,6 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
             'internal_ips': [],
             'dns_queries': [],
             'ioc_ips': [],
-            'ioc_domains': [],
-            'ioc_urls': [],
             'protocols': [],
             'ports': [],
             'user_agents': [],
@@ -646,8 +665,10 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
         if port is not None:
             port_counts[(str(port), proto)] += conn_packets
 
-        transport_counts[proto] += conn_packets
-        application_counts[service] += conn_packets
+        if proto in {'TCP', 'UDP'}:
+            transport_counts[proto] += conn_packets
+        if service not in {'TCP', 'UDP', 'ICMP', 'UNKNOWN_TRANSPORT'}:
+            application_counts[service] += conn_packets
         total_ip_bytes += int(log.get('orig_ip_bytes') or 0) + int(log.get('resp_ip_bytes') or 0)
 
         ts = log.get('ts')
@@ -662,18 +683,18 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
         elif not _is_private_ip(origin) and _is_private_ip(destination):
             direction_counts['Inbound'] += conn_packets
         elif _is_private_ip(origin) and _is_private_ip(destination):
-            direction_counts['Internal'] += conn_packets
+            direction_counts['Inbound'] += conn_packets
         else:
-            direction_counts['External'] += conn_packets
+            direction_counts['Outbound'] += conn_packets
 
     for log in dns_logs:
         query = _normalize_domain(log.get('query') or log.get('qname'))
-        if query:
+        if _is_probable_domain(query):
             dns_domain_counts[query] += 1
 
     for log in http_logs:
         host = _normalize_domain(_pick_value(log, 'host', 'referrer', 'uri'))
-        if host:
+        if _is_probable_domain(host):
             url_domain_counts[host] += 1
 
         user_agent = _pick_value(log, 'user_agent', 'ua', 'headers.user-agent')
@@ -689,13 +710,13 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
             if subject and 'CN=' in str(subject):
                 server_name = _normalize_domain(str(subject).split('CN=')[-1].split(',')[0])
                 
-        if server_name:
+        if _is_probable_domain(server_name):
             ssl_server_counts[server_name] += 1
 
     dns_queries = []
     for log in dns_logs:
         domain = _normalize_domain(_pick_value(log, 'query', 'qname'))
-        if not domain:
+        if not _is_probable_domain(domain):
             continue
         dns_queries.append({
             'domain': domain,
@@ -728,21 +749,6 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
         {'ip': ip, 'reason': 'Repeated external connections' if count >= 3 else 'Observed on outbound traffic'}
         for ip, count in external_ip_counts.most_common()
     ]
-    ioc_domains = []
-    for domain, count in (dns_domain_counts + url_domain_counts).most_common():
-        reason = 'Repeated DNS or HTTP usage' if count >= 2 else 'Observed in application traffic'
-        ioc_domains.append({'domain': domain, 'reason': reason})
-
-    ioc_urls = []
-    for log in http_logs:
-        host = _normalize_domain(_pick_value(log, 'host', 'referrer'))
-        uri = _pick_value(log, 'uri', 'path') or '/'
-        method = _pick_value(log, 'method', 'verb') or 'GET'
-        url = f'https://{host}{uri}' if host and not str(uri).startswith('http') else str(uri)
-        purpose = _pick_value(log, 'user_agent', 'server_name', 'mime_type') or 'HTTP activity'
-        if url:
-            ioc_urls.append({'url': url, 'method': method, 'purpose': purpose})
-
     protocol_rows = [{'protocol': protocol, 'packet_count': count} for protocol, count in transport_counts.most_common()]
     port_rows = [{'port': port, 'protocol': protocol, 'usage': count} for (port, protocol), count in port_counts.most_common()]
     alerts = analyze_threat_intel(conn_logs, dns_logs, http_logs)
@@ -809,7 +815,6 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
         'total_http_requests': aligned_http_requests,
         'total_bytes': aligned_total_bytes,
         'duration_seconds': duration_seconds,
-        'attack_duration_seconds': duration_seconds,
         'start_time_utc': start_time,
         'end_time_utc': end_time,
         'malware_type': 'Suspicious network activity',
@@ -834,8 +839,6 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
         'internal_ips': internal_ips,
         'dns_queries': dns_queries,
         'ioc_ips': ioc_ips,
-        'ioc_domains': ioc_domains,
-        'ioc_urls': ioc_urls,
         'protocols': protocol_rows,
         'ports': port_rows,
         'user_agents': user_agents,
@@ -925,7 +928,7 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
     
     elastic_data = _prepare_elastic_data(
         pcap_id, file_name, external_ips, external_ip_connections, internal_connections_flat, 
-        dns_queries=dns_queries, ioc_domains=ioc_domains, ioc_urls=ioc_urls,
+        dns_queries=dns_queries,
         extra_stats=extra_stats
     )
     

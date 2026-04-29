@@ -1376,7 +1376,6 @@
     }
 
     let currentDetailsData = null;
-    let connGraphNetwork = null;
 
     function escapeHtml(value) {
       return String(value ?? '')
@@ -1428,133 +1427,6 @@
       return common[tld] ? `${tld} (${common[tld]})` : tld;
     }
 
-    function closeConnModal() {
-      const modal = $('connModal');
-      modal.classList.remove('is-open');
-      modal.setAttribute('aria-hidden', 'true');
-    }
-
-    async function showConnectionsForInternalIp(ip) {
-      const modal = $('connModal');
-      const summary = $('connModalSummary');
-      const rows = $('connGraphRows');
-      const pcapId = currentDetailsData?.file_id || getSelectedPcapId() || '';
-      modal.classList.add('is-open');
-      modal.setAttribute('aria-hidden', 'false');
-      summary.textContent = `Loading Elasticsearch connections for ${ip}...`;
-      rows.innerHTML = '<tr><td colspan="6" class="dim">Loading...</td></tr>';
-
-      const params = new URLSearchParams();
-      if (pcapId) params.set('pcap_id', pcapId);
-      const response = await api(`/api/pcap/internal/${encodeURIComponent(ip)}/connections?${params.toString()}`);
-      const edges = Array.isArray(response?.data) ? response.data : [];
-
-      summary.textContent = `${edges.length} peer connection(s) found for internal host ${ip}`;
-      if (edges.length === 0) {
-        rows.innerHTML = '<tr><td colspan="6" class="dim">No Elasticsearch connection data found for this internal IP.</td></tr>';
-        if (connGraphNetwork) {
-          connGraphNetwork.destroy();
-          connGraphNetwork = null;
-        }
-        $('connGraph').innerHTML = '';
-        return;
-      }
-
-      const maxTraffic = Math.max(...edges.map((item) => Number(item.internal_packet_count || 0)), 1);
-      const nodes = [
-        {
-          id: `internal:${ip}`,
-          label: ip,
-          title: `Internal IP: ${ip}`,
-          shape: 'dot',
-          size: 24,
-          color: {
-            background: '#167a61',
-            border: '#0f5b48',
-            highlight: { background: '#1c9274', border: '#0f5b48' },
-          },
-          font: { color: '#0d1b2a', face: 'IBM Plex Mono' },
-        },
-      ];
-
-      const graphEdges = [];
-      edges.forEach((item, index) => {
-        const peerIp = item.external_ip || `unknown-${index}`;
-        const traffic = Number(item.internal_packet_count || 0);
-        const edgeWeight = 1 + (traffic / maxTraffic) * 7;
-        const nodeSize = 12 + (traffic / maxTraffic) * 10;
-        const isInternalPeer = String(item.peer_type || '').toLowerCase() === 'internal';
-        const peerNodeId = `${isInternalPeer ? 'internal' : 'external'}:${peerIp}:${index}`;
-
-        nodes.push({
-          id: peerNodeId,
-          label: peerIp,
-          title: `${peerIp}\nType: ${isInternalPeer ? 'Internal' : 'External'}\nTraffic: ${traffic.toLocaleString()} packets`,
-          shape: 'dot',
-          size: nodeSize,
-          color: {
-            background: isInternalPeer ? '#b66a22' : '#0e7aa8',
-            border: isInternalPeer ? '#8d541b' : '#0a5e80',
-            highlight: { background: isInternalPeer ? '#d08432' : '#2b95c4', border: isInternalPeer ? '#8d541b' : '#0a5e80' },
-          },
-          font: { color: '#0d1b2a', face: 'IBM Plex Mono' },
-        });
-
-        graphEdges.push({
-          from: `internal:${ip}`,
-          to: peerNodeId,
-          width: edgeWeight,
-          color: { color: isInternalPeer ? 'rgba(182, 106, 34, 0.55)' : 'rgba(14, 122, 168, 0.55)', highlight: isInternalPeer ? '#b66a22' : '#0e7aa8' },
-          arrows: { to: { enabled: true, scaleFactor: 0.5 } },
-          smooth: { type: 'dynamic' },
-        });
-      });
-
-      const graphContainer = $('connGraph');
-      if (connGraphNetwork) {
-        connGraphNetwork.destroy();
-      }
-
-      connGraphNetwork = new vis.Network(graphContainer, { nodes, edges: graphEdges }, {
-        autoResize: true,
-        nodes: {
-          borderWidth: 2,
-          shadow: true,
-        },
-        edges: {
-          shadow: false,
-        },
-        interaction: {
-          hover: true,
-          navigationButtons: true,
-          keyboard: true,
-        },
-        physics: {
-          enabled: true,
-          barnesHut: {
-            springLength: 170,
-            springConstant: 0.028,
-            damping: 0.4,
-          },
-          stabilization: {
-            iterations: 160,
-          },
-        },
-        layout: {
-          improvedLayout: true,
-        },
-      });
-
-      rows.innerHTML = edges.map((item) => row(
-        [item.external_ip || '—', 'ip'],
-        [String(item.peer_type || 'external').toUpperCase(), 'dim'],
-        [item.internal_packet_count || 0],
-        [countryDisplay(item.country), 'dim'],
-        [item.city || '—', 'dim'],
-        [item.isp || '—', 'dim']
-      )).join('');
-    }
-
     function renderCurrentDetails() {
       const data = currentDetailsData || {};
       renderTableRows('extB', data.external_ips || [], (item) => row(
@@ -1568,7 +1440,7 @@
       ), 7);
       renderTableRows('intB', data.internal_ips || [], (item) => {
         const ip = String(item.ip || '');
-        return `<tr><td><span class="ip-link" data-internal-ip="${escapeHtml(ip)}">${fmt(ip || '—')}</span></td><td>${fmt(item.packet_count)}</td><td class="dim">${fmt(item.remarks || '—')}</td></tr>`;
+        return `<tr><td>${fmt(ip || '—')}</td><td>${fmt(item.packet_count)}</td><td class="dim">${fmt(item.remarks || '—')}</td></tr>`;
       }, 3);
       renderTableRows('dnsB', data.dns_queries || [], (item) => row([item.domain, 'teal'], [item.record_type, 'dim'], [fmtTime(item.timestamp), 'dim']), 3);
       renderTableRows('iocDomB', data.ioc_domains || [], (item) => row([item.domain, 'warn'], [item.reason, 'dim']), 2);
@@ -1869,29 +1741,6 @@
       setPageNotice(`Unable to load capture details: ${error.message}`, true);
     });
 
-    $('intB').addEventListener('click', (event) => {
-      const trigger = event.target.closest('[data-internal-ip]');
-      if (!trigger) return;
-      const ip = trigger.getAttribute('data-internal-ip');
-      if (!ip) return;
-      showConnectionsForInternalIp(ip).catch((error) => {
-        console.error(error);
-        $('connModalSummary').textContent = `Failed to load connections for ${ip}.`;
-        $('connGraphRows').innerHTML = '<tr><td colspan="6" class="dim">Unable to load Elasticsearch data.</td></tr>';
-      });
-    });
-
-    $('connModalClose').addEventListener('click', closeConnModal);
-    $('connModal').addEventListener('click', (event) => {
-      if (event.target.id === 'connModal') {
-        closeConnModal();
-      }
-    });
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        closeConnModal();
-      }
-    });
   </script>
 </body>
 

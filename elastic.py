@@ -79,7 +79,6 @@ def create_granular_indexes():
                 "start_time_utc": {"type": "date"},
                 "end_time_utc": {"type": "date"},
                 "duration_seconds": {"type": "double"},
-                "attack_duration_seconds": {"type": "double"},
                 "total_packets": {"type": "long"},
                 "total_connections": {"type": "long"},
                 "exact_pcap_packets": {"type": "long"},
@@ -232,19 +231,6 @@ def create_granular_indexes():
                     "properties": {
                         "ip": {"type": "ip"},
                         "reason": {"type": "keyword"}
-                    }
-                },
-                "ioc_domains": {
-                    "properties": {
-                        "domain": {"type": "keyword"},
-                        "reason": {"type": "keyword"}
-                    }
-                },
-                "ioc_urls": {
-                    "properties": {
-                        "url": {"type": "keyword"},
-                        "method": {"type": "keyword"},
-                        "purpose": {"type": "keyword"}
                     }
                 },
                 "protocols": {
@@ -567,17 +553,34 @@ def get_pcap_stats_from_es(pcap_id):
     dir_stats = []
     try:
         aggs = {
-            "apps": {"terms": {"field": "service.keyword", "size": 10}},
-            "trans": {"terms": {"field": "proto.keyword", "size": 10}},
+            "apps": {
+                "terms": {
+                    "field": "service.keyword",
+                    "size": 10,
+                    "exclude": ["tcp", "udp", "icmp", "unknown_transport"]
+                }
+            },
+            "trans": {
+                "terms": {
+                    "field": "proto.keyword",
+                    "size": 10,
+                    "exclude": ["icmp", "unknown_transport"]
+                }
+            },
             "dirs": {"terms": {"field": "direction.keyword", "size": 5}}
         }
         res = es.search(index="zeek-conn", body={
-            "query": {"term": {"pcap_id": pcap_id}},
+            "query": {
+                "bool": {
+                    "must": [{"term": {"pcap_id": pcap_id}}],
+                    "must_not": [{"term": {"proto.keyword": "unknown_transport"}}]
+                }
+            },
             "aggs": aggs, "size": 0
         })
         buckets = res.get("aggregations", {})
         app_stats = [{"label": b["key"] or "unknown", "value": b["doc_count"]} for b in buckets.get("apps", {}).get("buckets", [])]
-        trans_stats = [{"label": b["key"], "value": b["doc_count"]} for b in buckets.get("trans", {}).get("buckets", [])]
+        trans_stats = [{"label": b["key"], "value": b["doc_count"]} for b in buckets.get("trans", {}).get("terms", {}).get("buckets", [])]
         dir_stats = [{"label": b["key"], "value": b["doc_count"]} for b in buckets.get("dirs", {}).get("buckets", [])]
     except Exception: pass
 
@@ -585,7 +588,14 @@ def get_pcap_stats_from_es(pcap_id):
     dns_stats = []
     try:
         res = es.search(index="zeek-dns", body={
-            "query": {"term": {"pcap_id": pcap_id}},
+            "query": {
+                "bool": {
+                    "must": [
+                        {"term": {"pcap_id": pcap_id}},
+                        {"regexp": {"query.keyword": "^(?:[a-z0-9-]+\\.)+[a-z0-9-]+$"}}
+                    ]
+                }
+            },
             "aggs": {"domains": {"terms": {"field": "query.keyword", "size": 10}}}, "size": 0
         })
         dns_stats = [{"label": b["key"], "value": b["doc_count"]} for b in res.get("aggregations", {}).get("domains", {}).get("buckets", [])]
@@ -856,7 +866,14 @@ def get_global_aggregation():
                 "size": 0,
                 "aggs": {
                     "dns_stats": {
-                        "filter": {"term": {"type": "dns"}},
+                        "filter": {
+                            "bool": {
+                                "must": [
+                                    {"term": {"type": "dns"}},
+                                    {"regexp": {"domain.keyword": "^(?:[a-z0-9-]+\\.)+[a-z0-9-]+$"}}
+                                ]
+                            }
+                        },
                         "aggs": {
                             "total": {"cardinality": {"field": "domain"}},
                             "top": {
@@ -866,7 +883,17 @@ def get_global_aggregation():
                         }
                     },
                     "url_stats": {
-                        "filter": {"term": {"type": "http"}},
+                        "filter": {
+                            "bool": {
+                                "must": [
+                                    {"term": {"type": "http"}},
+                                    {"regexp": {"domain.keyword": "^(?:[a-z0-9-]+\\.)+[a-z0-9-]+$"}}
+                                ],
+                                "must_not": [
+                                    {"regexp": {"domain.keyword": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$"}}
+                                ]
+                            }
+                        },
                         "aggs": {
                             "total": {"cardinality": {"field": "domain"}},
                             "top": {
@@ -901,7 +928,11 @@ def get_global_aggregation():
                 "aggs": {
                     "total_protos": {"cardinality": {"field": "proto.keyword"}},
                     "protocols": {
-                        "terms": {"field": "proto.keyword", "size": 10}
+                        "terms": {
+                            "field": "proto.keyword",
+                            "size": 10,
+                            "exclude": ["icmp", "unknown_transport"]
+                        }
                     }
                 }
             }
@@ -928,7 +959,7 @@ def get_global_aggregation():
             for item in breakdown:
                 label = item.get("label")
                 value = item.get("value", 0)
-                if label:
+                if label in {"Inbound", "Outbound"}:
                     dir_totals[label] += value
         
         stats["direction_breakdown"] = [{"label": k, "value": v} for k, v in dir_totals.items()]
