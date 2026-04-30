@@ -1,10 +1,13 @@
 import os
 import json
 import math
+from collections import Counter
+from pathlib import Path
+from xml.etree import ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import NotFoundError
-from elasticsearch.helpers import bulk
+from elasticsearch.helpers import bulk, scan
 
 # ---------------- CONFIG ----------------
 ES_HOST = os.getenv("ES_HOST", "http://localhost:9200")
@@ -23,6 +26,105 @@ PCAP_DASHBOARD_INDEX = "pcap-dashboard"  # Full dashboard payload
 PCAP_INDEX = "pcap-analysis"
 SCAN_INDEX = "ip-intelligence-latest"
 SCAN_INDEX_LEGACY = "ip-scan-results"
+
+ISO_3166_XML = "/usr/share/xml/iso-codes/iso_3166-1.xml"
+_ISO3_BY_ALPHA2 = {}
+_ISO3_BY_NAME = {}
+_ISO3_BY_NAME_NORMALIZED = {}
+_COUNTRY_ALIASES = {
+    "united states": "USA",
+    "united states of america": "USA",
+    "us": "USA",
+    "usa": "USA",
+    "u.s.": "USA",
+    "uk": "GBR",
+    "united kingdom": "GBR",
+    "great britain": "GBR",
+    "south korea": "KOR",
+    "republic of korea": "KOR",
+    "north korea": "PRK",
+    "russia": "RUS",
+    "iran": "IRN",
+    "syria": "SYR",
+    "tanzania": "TZA",
+    "vietnam": "VNM",
+    "laos": "LAO",
+    "moldova": "MDA",
+    "bolivia": "BOL",
+    "venezuela": "VEN",
+    "brunei": "BRN",
+    "palestine": "PSE",
+    "czech republic": "CZE",
+    "slovakia": "SVK",
+    "macedonia": "MKD",
+    "syria": "SYR",
+    "hong kong": "HKG",
+    "taiwan": "TWN",
+    "macao": "MAC",
+    "macao sar": "MAC",
+}
+
+
+def _normalize_name(value):
+    return " ".join(str(value or "").strip().lower().replace(".", " ").replace(",", " ").split())
+
+
+def _load_iso_country_maps():
+    global _ISO3_BY_ALPHA2, _ISO3_BY_NAME, _ISO3_BY_NAME_NORMALIZED
+    if _ISO3_BY_ALPHA2:
+        return
+
+    xml_path = Path(ISO_3166_XML)
+    if not xml_path.exists():
+        return
+
+    try:
+        root = ET.parse(str(xml_path)).getroot()
+        for entry in root.findall("iso_3166_entry"):
+            alpha2 = (entry.attrib.get("alpha_2_code") or "").upper()
+            alpha3 = (entry.attrib.get("alpha_3_code") or "").upper()
+            name = entry.attrib.get("name") or ""
+            official_name = entry.attrib.get("official_name") or ""
+
+            if alpha2 and alpha3:
+                _ISO3_BY_ALPHA2[alpha2] = alpha3
+            if name and alpha3:
+                _ISO3_BY_NAME[name] = alpha3
+                _ISO3_BY_NAME_NORMALIZED[_normalize_name(name)] = alpha3
+            if official_name and alpha3:
+                _ISO3_BY_NAME[official_name] = alpha3
+                _ISO3_BY_NAME_NORMALIZED[_normalize_name(official_name)] = alpha3
+    except Exception:
+        _ISO3_BY_ALPHA2 = {}
+        _ISO3_BY_NAME = {}
+        _ISO3_BY_NAME_NORMALIZED = {}
+
+
+def _country_to_iso3(value):
+    if not value:
+        return None
+
+    _load_iso_country_maps()
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    upper = text.upper()
+    if len(upper) == 3 and upper.isalpha():
+        return upper
+
+    if len(upper) == 2 and upper.isalpha():
+        return _ISO3_BY_ALPHA2.get(upper)
+
+    if text in _COUNTRY_ALIASES:
+        return _COUNTRY_ALIASES[text]
+
+    normalized = _normalize_name(text)
+    if normalized in _COUNTRY_ALIASES:
+        return _COUNTRY_ALIASES[normalized]
+
+    return _ISO3_BY_NAME.get(text) or _ISO3_BY_NAME_NORMALIZED.get(normalized)
 
 # ---------------- CONNECTION ----------------
 _es_instance = None
@@ -400,7 +502,23 @@ def bulk_index_granular_data(pcap_id, pcap_filename, summary_data, ips_data, dns
     
     # 0. Cleanup old records for this PCAP to prevent duplication
     try:
+        es.delete_by_query(index=PCAP_CAPTURES_INDEX, body={"query": {"term": {"pcap_id": pcap_id}}})
+    except: pass
+
+    try:
+        es.delete_by_query(index=PCAP_IPS_INDEX, body={"query": {"term": {"pcap_id": pcap_id}}})
+    except: pass
+
+    try:
+        es.delete_by_query(index=PCAP_DNS_INDEX, body={"query": {"term": {"pcap_id": pcap_id}}})
+    except: pass
+
+    try:
         es.delete_by_query(index=PCAP_PAYLOADS_INDEX, body={"query": {"term": {"pcap_id": pcap_id}}})
+    except: pass
+
+    try:
+        es.delete_by_query(index=PCAP_DASHBOARD_INDEX, body={"query": {"term": {"pcap_id": pcap_id}}})
     except: pass
 
     actions = []
@@ -557,7 +675,7 @@ def get_pcap_stats_from_es(pcap_id):
                 "terms": {
                     "field": "service.keyword",
                     "size": 10,
-                    "exclude": ["tcp", "udp", "icmp", "unknown_transport"]
+                    "exclude": ["tcp", "udp", "icmp", "unknown_transport", "unknown", "-", "n/a"]
                 }
             },
             "trans": {
@@ -968,6 +1086,81 @@ def get_global_aggregation():
     return stats
 
 
+def get_dashboard_breakdown_totals(field_name, size=1000, exclude_labels=None):
+    """
+    Sum breakdown arrays stored on dashboard documents.
+    Example field_name values: transport_breakdown, application_breakdown,
+    direction_breakdown, ssl_servers.
+    """
+    es = get_es()
+    if not es:
+        return []
+
+    try:
+        res = es.search(
+            index=PCAP_DASHBOARD_INDEX,
+            body={
+                "size": size,
+                "_source": [field_name],
+                "query": {"match_all": {}}
+            }
+        )
+        totals = Counter()
+        excluded = {str(item).strip().lower() for item in (exclude_labels or [])}
+        for hit in res.get("hits", {}).get("hits", []):
+            for item in hit.get("_source", {}).get(field_name, []) or []:
+                label = item.get("label")
+                value = item.get("value", 0)
+                if label is None:
+                    continue
+                if str(label).strip().lower() in excluded:
+                    continue
+                try:
+                    totals[label] += int(value or 0)
+                except Exception:
+                    continue
+        return [{"label": label, "value": count} for label, count in totals.most_common()]
+    except Exception:
+        return []
+
+
+def get_infected_host_breakdown():
+    """
+    Return infected_host counts across dashboard documents.
+    """
+    es = get_es()
+    if not es:
+        return []
+
+    try:
+        res = es.search(
+            index=PCAP_DASHBOARD_INDEX,
+            body={
+                "size": 0,
+                "query": {
+                    "bool": {
+                        "must_not": [
+                            {"term": {"infected_host.keyword": "Unknown"}}
+                        ]
+                    }
+                },
+                "aggs": {
+                    "infected_hosts": {
+                        "terms": {
+                            "field": "infected_host.keyword",
+                            "size": 100,
+                            "order": {"count": "desc"}
+                        }
+                    }
+                }
+            }
+        )
+        buckets = res.get("aggregations", {}).get("infected_hosts", {}).get("buckets", [])
+        return [{"infected_host": bucket["key"], "count": int(bucket.get("doc_count", 0))} for bucket in buckets]
+    except Exception:
+        return []
+
+
 
 
 def get_ip_breakdown(pcap_id=None):
@@ -1158,23 +1351,29 @@ def get_geo_grid_aggregation(precision=3):
                 ]
             }
         },
-        "aggs": {
-            "grid": {
-                "geohash_grid": {
-                    "field": "location",
-                    "precision": precision
-                },
                 "aggs": {
-                    "centroid": {
-                        "geo_centroid": {"field": "location"}
-                    },
-                    "unique_ips": {
-                        "cardinality": {"field": "ip"}
+                    "grid": {
+                        "geohash_grid": {
+                            "field": "location",
+                            "precision": precision
+                        },
+                        "aggs": {
+                            "centroid": {
+                                "geo_centroid": {"field": "location"}
+                            },
+                            "unique_ips": {
+                                "cardinality": {"field": "ip"}
+                            },
+                            "sample_ips": {
+                                "terms": {
+                                    "field": "ip",
+                                    "size": 10
+                                }
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
 
     try:
         res = es.search(index=PCAP_IPS_INDEX, body=body)
@@ -1184,18 +1383,215 @@ def get_geo_grid_aggregation(precision=3):
         for b in buckets:
             centroid = b.get("centroid", {}).get("location", {})
             unique_count = b.get("unique_ips", {}).get("value", 0)
+            sample_ips = [
+                item.get("key")
+                for item in b.get("sample_ips", {}).get("buckets", []) or []
+                if item.get("key")
+            ]
             if centroid:
                 points.append({
                     "lat": centroid.get("lat"),
                     "lon": centroid.get("lon"),
                     "count": int(unique_count),
                     "hits": b["doc_count"], # Keep original doc count as 'hits' if needed
-                    "geohash": b["key"]
+                    "geohash": b["key"],
+                    "ips": sample_ips,
                 })
         return points
 
     except Exception as e:
         print(f"✗ Geo Grid Aggregation Error: {e}")
+        return []
+
+
+def get_country_city_map(level="country"):
+    """
+    Build map data for external IPs grouped by country or city.
+    Country uses ISO-3 codes and returns unique IP count + hits.
+    City includes lat/lon, country ISO-3, unique IP count + hits.
+    """
+    es = get_es()
+    if not es:
+        return {}
+
+    level = (level or "").strip().lower()
+    if level not in {"country", "city"}:
+        return {}
+
+    base_filter = {
+        "bool": {
+            "must": [
+                {"term": {"is_internal": False}}
+            ],
+            "must_not": [
+                {"term": {"latitude": 0}},
+                {"term": {"longitude": 0}}
+            ]
+        }
+    }
+
+    try:
+        if level == "country":
+            res = es.search(
+                index=PCAP_IPS_INDEX,
+                body={
+                    "size": 0,
+                    "query": base_filter,
+                    "aggs": {
+                        "countries": {
+                            "terms": {"field": "country", "size": 500},
+                            "aggs": {
+                                "unique_ips": {"cardinality": {"field": "ip"}},
+                                "hits": {"sum": {"field": "packet_count"}}
+                            }
+                        }
+                    }
+                }
+            )
+            buckets = res.get("aggregations", {}).get("countries", {}).get("buckets", [])
+            rows = []
+            max_count = 0
+            for bucket in buckets:
+                country_name = bucket.get("key")
+                iso3 = _country_to_iso3(country_name)
+                count = int(bucket.get("unique_ips", {}).get("value", 0) or 0)
+                hits = int(bucket.get("hits", {}).get("value", 0) or 0)
+                max_count = max(max_count, count)
+                rows.append({
+                    "country": country_name,
+                    "iso_code": iso3 or country_name,
+                    "count": count,
+                    "hits": hits,
+                })
+
+            rows.sort(key=lambda x: x["count"], reverse=True)
+            return {
+                "level": "country",
+                "metric": "count",
+                "max": max_count,
+                "data": rows,
+            }
+
+        res = es.search(
+            index=PCAP_IPS_INDEX,
+            body={
+                "size": 0,
+                "query": base_filter,
+                "aggs": {
+                    "cities": {
+                        "terms": {"field": "city", "size": 1000},
+                        "aggs": {
+                            "unique_ips": {"cardinality": {"field": "ip"}},
+                            "hits": {"sum": {"field": "packet_count"}},
+                            "centroid": {"geo_centroid": {"field": "location"}},
+                            "country_name": {
+                                "terms": {"field": "country", "size": 1, "missing": "Unknown"}
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        buckets = res.get("aggregations", {}).get("cities", {}).get("buckets", [])
+        rows = []
+        for bucket in buckets:
+            centroid = bucket.get("centroid", {}).get("location", {})
+            if not centroid:
+                continue
+
+            country_buckets = bucket.get("country_name", {}).get("buckets", [])
+            country_name = country_buckets[0].get("key") if country_buckets else None
+            rows.append({
+                "city": bucket.get("key"),
+                "country": _country_to_iso3(country_name) or country_name or "Unknown",
+                "lat": centroid.get("lat"),
+                "lon": centroid.get("lon"),
+                "count": int(bucket.get("unique_ips", {}).get("value", 0) or 0),
+                "hits": int(bucket.get("hits", {}).get("value", 0) or 0),
+            })
+
+        rows.sort(key=lambda x: x["count"], reverse=True)
+        return {
+            "level": "city",
+            "data": rows,
+        }
+    except Exception as e:
+        print(f"✗ Country/City map aggregation error: {e}")
+        return {}
+
+
+def get_all_external_ips():
+    """
+    Return a flat, deduplicated list of all external IPs across the repository.
+    """
+    es = get_es()
+    if not es:
+        return []
+
+    query = {
+        "bool": {
+            "filter": [
+                {"term": {"is_internal": False}},
+                {"exists": {"field": "ip"}}
+            ]
+        }
+    }
+
+    aggregated = {}
+
+    try:
+        for hit in scan(
+            es,
+            index=PCAP_IPS_INDEX,
+            query={
+                "_source": [
+                    "ip",
+                    "packet_count",
+                    "country",
+                    "city",
+                    "latitude",
+                    "longitude",
+                    "isp",
+                ],
+                "query": query,
+            },
+            size=1000,
+            preserve_order=False,
+            clear_scroll=True,
+        ):
+            source = hit.get("_source", {}) or {}
+            ip = source.get("ip")
+            if not ip:
+                continue
+
+            row = aggregated.setdefault(ip, {
+                "ip": ip,
+                "packet_count": 0,
+                "country": source.get("country") or "Unknown",
+                "city": source.get("city") or "Unknown",
+                "latitude": source.get("latitude"),
+                "longitude": source.get("longitude"),
+                "isp": source.get("isp") or "Unknown",
+            })
+
+            row["packet_count"] += int(source.get("packet_count", 0) or 0)
+
+            if row["country"] in (None, "", "Unknown") and source.get("country"):
+                row["country"] = source.get("country")
+            if row["city"] in (None, "", "Unknown") and source.get("city"):
+                row["city"] = source.get("city")
+            if row["isp"] in (None, "", "Unknown") and source.get("isp"):
+                row["isp"] = source.get("isp")
+            if row["latitude"] in (None, 0) and source.get("latitude") not in (None, 0):
+                row["latitude"] = source.get("latitude")
+            if row["longitude"] in (None, 0) and source.get("longitude") not in (None, 0):
+                row["longitude"] = source.get("longitude")
+
+        results = list(aggregated.values())
+        results.sort(key=lambda item: item.get("packet_count", 0), reverse=True)
+        return results
+    except Exception as e:
+        print(f"✗ External IP export error: {e}")
         return []
 
 

@@ -640,7 +640,7 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
 
     for log in conn_logs:
         proto = str(_pick_value(log, 'proto', 'transport', 'service') or 'unknown').upper()
-        service = str(_pick_value(log, 'service', 'proto') or 'unknown')
+        service = str(_pick_value(log, 'service', 'proto') or 'unknown').strip().lower()
         origin = _pick_value(log, 'id.orig_h', 'orig_h', 'source')
         destination = _pick_value(log, 'id.resp_h', 'resp_h', 'destination')
         port = _pick_value(log, 'id.resp_p', 'resp_p', 'port')
@@ -667,7 +667,7 @@ def build_dashboard_stats(upload_folder, zeek_logs_folder, pcap_id=None, force_r
 
         if proto in {'TCP', 'UDP'}:
             transport_counts[proto] += conn_packets
-        if service not in {'TCP', 'UDP', 'ICMP', 'UNKNOWN_TRANSPORT'}:
+        if service not in {'tcp', 'udp', 'icmp', 'unknown_transport', 'unknown', '-', 'n/a'}:
             application_counts[service] += conn_packets
         total_ip_bytes += int(log.get('orig_ip_bytes') or 0) + int(log.get('resp_ip_bytes') or 0)
 
@@ -1027,7 +1027,7 @@ def index_capture_documents(upload_folder, zeek_logs_folder, pcap_id):
 
 
 RECENT_CONN_LIMIT = 150
-RECENT_CONN_PER_PAGE_MAX = 20
+RECENT_CONN_PER_PAGE_MAX = 40
 
 def _timeline_to_cutoff(timeline):
     if not timeline or timeline == 'default':
